@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Scratch / intermediate outputs (keep only canonical run dirs)
+outputs/ECA3_run/
+outputs/ECA3_viewer*.html
+outputs/ECA3_evolution.gif
+outputs/evolution.gif
+outputs/test_*
+outputs/aligner_frame_*.png
+outputs/frame_*.png
+outputs/still_*.png
+outputs/v2_*.png
+outputs/ECA3_run_console.log
+
+# Large raw AlphaFold cache (regenerable from aligned PDBs)
+outputs/ECA3_run_v2/structures/raw/
+
+# Old bundle files (regenerable)
+workflow_source_bundle.md
+skills_source_bundle.md

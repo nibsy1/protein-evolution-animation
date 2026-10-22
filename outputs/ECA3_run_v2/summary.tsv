@@ -1,0 +1,17 @@
+accession	species	lineage	uniprot	source	plddt	rmsd_to_ref	n_residues
+A0A2K3D2Z5	Chlamydomonas reinhardtii	Green Algae	A0A2K3D2Z5	alphafold	78.32219165927239	35.49	1127
+XP_002958852.1	Volvox carteri	Green Algae	D8UJK8	alphafold	82.49430046948356	14.59	1065
+PRW20976.1	Chlorella vulgaris	Green Algae	A0A2P6TEA8	alphafold	79.72562146892655	26.71	1062
+XP_024389658.1	Physcomitrium patens	Bryophytes	A0A2K1JTV4	alphafold	82.09555444555444	4.26	1001
+Q9SY55	Arabidopsis thaliana	Angiosperms	Q9SY55	alphafold	82.96740480961924	3.75	998
+Q2QMX9	Oryza sativa	Angiosperms	Q2QMX9	alphafold	82.71462745098037	45.20	1020
+PWZ53365.1	Zea mays	Angiosperms	A0A804M3D1	alphafold	83.38521478521477	0.00	1001
+XP_004242949.1	Solanum lycopersicum	Angiosperms	A0A3Q7H770	alphafold	81.63044000000001	2.35	1000
+XP_010999893.1	Populus trichocarpa	Angiosperms	A0AAJ6WZ72	alphafold	82.08987012987012	4.72	1001
+A0AAN9MGY5	Phaseolus vulgaris	Angiosperms	A0AAN9MGY5	alphafold	77.4660258780037	43.49	1082
+XP_044980229.1	Hordeum vulgare	Angiosperms	A0A8I6Y4T3	alphafold	81.69763	3.26	1000
+BFI42203.1	Marchantia polymorpha	Bryophytes		threaded:D8UJK8	75.45916975609757	14.98	1025
+XP_087190603.1	Azolla filiculoides	Ferns		threaded:A0A804M3D1	75.04849800000001	0.59	1000
+XP_089305251.1	Pinus taeda	Gymnosperms		threaded:A0AAJ6WZ72	73.88088311688311	4.72	1001
+CAL1823912.1	Picea abies	Gymnosperms		threaded:A0A804M3D1	75.38897284533648	18.31	847
+OIT37031.1	Nicotiana benthamiana	Angiosperms		threaded:A0A2K1JTV4	73.93458600000001	4.19	1000

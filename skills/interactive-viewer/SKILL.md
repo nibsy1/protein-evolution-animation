@@ -6,13 +6,16 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v12: parallel-transport frames fix oval/twisted helix ribbons; insertions
+  grow from nearest paired neighbor (not global centroid) — no more
+  "expanding from inner center" on distant species transitions.
   v11: variable-radius ribbon tube (helix wide/flat, strand wide, loop thin)
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 11
+version: 12
 ---
-# Interactive Evolution Viewer (v11)
+# Interactive Evolution Viewer (v12)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -25,6 +28,22 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v12
+
+- **Parallel-transport frames** — the ribbon tube's cross-section frame now
+  follows the curve using parallel transport (projecting the previous frame's
+  normal onto the plane perpendicular to the new tangent). This eliminates the
+  oval/twisted appearance of helix ribbons that occurred when the binormal was
+  locked to the XZ plane (`B = (N.z, 0, -N.x)`), which broke down for helices
+  running along the Y axis.
+- **Insertions grow from nearest paired neighbor** — when a species has residues
+  not present in the source (insertions, up to 34% for distant pairs like
+  Chlamydomonas ↔ Arabidopsis), they now grow from the morphing position of the
+  nearest paired residue along the chain, not from the global centroid. This
+  eliminates the "expanding from inner center outwards" effect on transitions
+  between dissimilar structures. Same fix applied to `proteinlib.morph_frames`
+  so the GIF renderer matches.
 
 ## What's new in v11
 

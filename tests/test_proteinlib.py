@@ -82,18 +82,30 @@ def test_morph_frames_endpoints_and_freeze():
     print("ok test_morph_frames_endpoints_and_freeze")
 
 
-def test_morph_frames_insertions_grow_from_centroid():
+def test_morph_frames_insertions_grow_from_nearest_paired():
+    """Insertions should grow from their nearest paired neighbor's morphing
+    position, not the global centroid (v12 fix)."""
     a = np.zeros((10, 3))
+    a[:, 0] = np.arange(10) * 5.0  # chain along x: 0,5,10,...,45
     b = np.zeros((12, 3))
-    b[10:] = np.array([[5.0, 5.0, 5.0], [6.0, 6.0, 6.0]])  # insertions
+    b[:10] = a.copy()
+    b[10:] = np.array([[100.0, 100.0, 100.0], [110.0, 110.0, 110.0]])
     pairs = list(zip(range(10), range(10)))
     w = np.zeros(10)
     frames = pl.morph_frames(a, b, pairs, w, 5)
-    # at t=0 insertions sit at A's centroid (origin)
-    assert np.allclose(frames[0][10:], 0.0)
-    # at t=1 they reach B
+    # At t=0, insertions should start at the nearest paired residue's
+    # position (residue 9 at [45,0,0]), NOT at centroid [22.5,0,0]
+    assert np.allclose(frames[0][10:], [45.0, 0.0, 0.0]), \
+        f"Insertions should start at nearest paired pos [45,0,0], got {frames[0][10:]}"
+    # At t=1 they reach B
     assert np.allclose(frames[-1][10:], b[10:])
-    print("ok test_morph_frames_insertions_grow_from_centroid")
+    # At midpoint, insertions should be halfway between anchor and target
+    mid = frames[2]
+    t_mid = 0.5  # ease(2/4) = smoothstep(0.5) = 0.5
+    expected = np.array([45.0, 0, 0]) * (1 - t_mid) + b[10] * t_mid
+    assert np.allclose(mid[10], expected, atol=1e-6), \
+        f"Mid insertion should be at {expected}, got {mid[10]}"
+    print("ok test_morph_frames_insertions_grow_from_nearest_paired")
 
 
 def test_write_ca_pdb_ribbon_records(tmp_path=None):
@@ -220,7 +232,7 @@ def main():
     test_stability_mask_frozen_vs_animated()
     test_stability_mask_ss_change_animates()
     test_morph_frames_endpoints_and_freeze()
-    test_morph_frames_insertions_grow_from_centroid()
+    test_morph_frames_insertions_grow_from_nearest_paired()
     test_write_ca_pdb_ribbon_records()
     test_kabsch_identity()
     test_reference_pairs_anchored()

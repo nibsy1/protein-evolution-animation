@@ -1,416 +1,514 @@
 #!/usr/bin/env python3
-"""Render an evolutionary morph animation from aligned structures. (v3)
+"""Shared library for the protein evolution animation project.
 
-Usage:
-    python morph_animation.py structures/aligned.json -o evolution.gif
-    python morph_animation.py aligned.json -o out.gif --hold 25 --morph 15 --fps 12
+Structure handling (CA-trace PDB parsing/writing), secondary-structure
+assignment, local sequence correspondence (BLOSUM62), Kabsch superposition,
+and the stability mask that drives the smooth morph transitions.
 
-Reads the aligned.json produced by the structure-aligner skill v2 (all
-structures already superposed in a common 3D frame, each carrying its
-residue sequence and per-residue secondary structure) and renders a GIF
-that steps through the species in evolutionary order (green algae ->
-angiosperms).
-
-v2 changes (the "smooth, change-only" transition):
-    - RIBBON rendering: helices as flat ribbons, strands as arrows/ribbons,
-      loops as a thin tube, instead of scatter+line. Clean cartoon look.
-    - FIXED MEDIUM LIGHTING: two lights parented to the camera at constant
-      intensity, so shading is consistent across frames and while rotating.
-    - STABILITY-MASKED MORPH: per corresponding residue we compute the
-      CA displacement and whether the secondary-structure class changed.
-      Residues that are stable AND structurally conserved are frozen
-      (a helix that is a helix in both species does not reshuffle);
-      only genuinely changing regions move. Insertions fade in from the
-      core centroid instead of popping in. Eased (smoothstep) timing.
-    - v3: residue correspondence is anchored through the alignment
-      reference (reference_pairs), so pairwise alignment slips between
-      distant homologs no longer reshuffle the whole protein, and the
-      N-/C-termini are labeled with markers on every frame.
-    - No membrane planes anywhere.
-
-Output:
-    GIF animation (default evolution.gif) + a frame sheet PNG for
-    quick visual inspection.
+The stability mask is the core of the new animation behaviour: for every
+pair of consecutive structures we compute, per corresponding residue,
+  - the C-alpha displacement after superposition, and
+  - whether the secondary-structure element (helix/strand/loop) is conserved.
+Residues that are both spatially stable and structurally conserved are
+FROZEN during the morph (helix stays a helix, in place); only residues
+with real structural change are interpolated, and residues present in only
+one structure fade in/out. This removes the old "whole protein reshuffles
+with an abrupt end" transitions.
 """
-import argparse
-import json
-import os
-import sys
-
 import numpy as np
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-for _cand in (os.path.join(_HERE, "..", "..", "..", "src"),
-              os.path.join(_HERE, "..", "..", "src"),
-              os.path.join(_HERE, "src")):
-    if os.path.isdir(_cand) and _cand not in sys.path:
-        sys.path.insert(0, os.path.abspath(_cand))
-try:
-    import proteinlib as pl
-except ImportError:
-    pl = None
-
-LINEAGE_ORDER = [
-    "Green Algae",
-    "Bryophytes",
-    "Ferns",
-    "Gymnosperms",
-    "Angiosperms",
-]
-
-LINEAGE_LABELS = {
-    "Green Algae": "Green algae",
-    "Bryophytes": "Bryophytes (mosses & liverworts)",
-    "Ferns": "Ferns",
-    "Gymnosperms": "Gymnosperms (conifers)",
-    "Angiosperms": "Flowering plants",
+AA3TO1 = {
+    'ALA': 'A', 'ARG': 'R', 'ASN': 'N', 'ASP': 'D', 'CYS': 'C',
+    'GLN': 'Q', 'GLU': 'E', 'GLY': 'G', 'HIS': 'H', 'ILE': 'I',
+    'LEU': 'L', 'LYS': 'K', 'MET': 'M', 'PHE': 'F', 'PRO': 'P',
+    'SER': 'S', 'THR': 'T', 'TRP': 'W', 'TYR': 'Y', 'VAL': 'V',
 }
-
-# ribbon palette (matches the dark theme, reads well under medium light)
-SS_COLOR = {"H": "#c678dd", "E": "#e5c07b", "C": "#7f8c98"}
-BG = "#0d1117"
+AA1TO3 = {v: k for k, v in AA3TO1.items()}
+AA1TO3['X'] = 'GLY'
 
 
-def order_structures(structs):
-    """Order by lineage; within a lineage, chain by core identity."""
-    ordered = []
-    for lineage in LINEAGE_ORDER:
-        group = [s for s in structs if s.get("lineage") == lineage]
-        if not group:
-            continue
-        group.sort(key=lambda s: -(s.get("core_identity") or 0))
-        ordered.extend(group)
-    known = set(LINEAGE_ORDER)
-    rest = [s for s in structs if s.get("lineage") not in known]
-    return ordered + rest
+# ---------------------------------------------------------------- PDB I/O
+
+def parse_pdb_ca(path):
+    """Parse CA atoms from a PDB file -> dict(coords, plddts, residues, seq)."""
+    coords, plddts, residues = [], [], []
+    with open(path) as f:
+        for line in f:
+            if line.startswith("ATOM") and line[12:16].strip() == "CA":
+                residues.append(line[17:20].strip())
+                coords.append((float(line[30:38]), float(line[38:46]),
+                               float(line[46:54])))
+                try:
+                    plddts.append(float(line[60:66]))
+                except ValueError:
+                    plddts.append(50.0)
+    seq = "".join(AA3TO1.get(r, 'X') for r in residues)
+    return {"coords": np.array(coords, dtype=float),
+            "plddts": np.array(plddts, dtype=float),
+            "residues": residues, "seq": seq}
 
 
-# ------------------------------------------------------------- ribbon draw
+def write_ca_pdb(coords, plddts, path, name, ss=None, seq=None):
+    """Write a CA-trace PDB, optionally with HELIX/SHEET records.
 
-def _ribbon_axes(coords, i, j):
-    """Local frame along a ribbon segment: tangent, normal, binormal."""
-    a = coords[i]
-    b = coords[min(j - 1, len(coords) - 1)]
-    tangent = b - a
-    n = np.linalg.norm(tangent)
-    if n < 1e-6:
-        tangent = np.array([1.0, 0.0, 0.0])
-    else:
-        tangent = tangent / n
-    ref = np.array([0.0, 0.0, 1.0])
-    if abs(np.dot(tangent, ref)) > 0.95:
-        ref = np.array([0.0, 1.0, 0.0])
-    normal = np.cross(tangent, ref)
-    normal /= np.linalg.norm(normal)
-    binormal = np.cross(tangent, normal)
-    return tangent, normal, binormal
-
-
-def draw_structure(ax, coords, ss, colors, min_helix=4, min_strand=3,
-                   termini=None):
-    """Cartoon ribbon: helices as wide ribbons, strands as arrows, loops as
-    a thin tube. SS class colors are tinted per segment by mean pLDDT so
-    confidence is still readable. Lighting is applied by the caller.
-
-    termini: optional (n_idx, c_idx) marking the N- and C-terminal CA
-    positions; drawn as small sphere markers with "N"/"C" text labels.
+    HELIX/SHEET records make the file render as ribbons in PyMOL, ChimeraX,
+    Mol*, etc. - the ribbon style the animation and viewer use.
     """
     coords = np.asarray(coords, dtype=float)
-    # faint backbone underneath for continuity
-    ax.plot(coords[:, 0], coords[:, 1], coords[:, 2],
-            color="#30363d", linewidth=0.6, alpha=0.5, zorder=1)
-    segs = pl.ribbon_segments(coords, ss)
-    for seg in segs:
-        i, j = seg["idx"]
-        pts = coords[i:j]
-        if len(pts) < 2:
-            continue
-        if seg["type"] == "H" and (j - i) < min_helix:
-            seg_type = "C"
-        elif seg["type"] == "E" and (j - i) < min_strand:
-            seg_type = "C"
+    lines = [f"REMARK   aligned CA-trace model: {name}"]
+    if ss:
+        n = 0
+        i = 0
+        while i < len(ss):
+            if ss[i] == 'H':
+                j = i
+                while j < len(ss) and ss[j] == 'H':
+                    j += 1
+                if j - i >= 4:
+                    n += 1
+                    r1 = AA1TO3.get(seq[i] if seq else 'A', 'GLY')
+                    r2 = AA1TO3.get(seq[j - 1] if seq else 'A', 'GLY')
+                    lines.append(f"HELIX  {n:3d} {n:3d} {r1:>3s} A {i + 1:4d}  "
+                                 f"{r2:>3s} A {j:4d}  1")
+                i = j
+            else:
+                i += 1
+        n = 0
+        i = 0
+        while i < len(ss):
+            if ss[i] == 'E':
+                j = i
+                while j < len(ss) and ss[j] == 'E':
+                    j += 1
+                if j - i >= 3:
+                    n += 1
+                    r1 = AA1TO3.get(seq[i] if seq else 'A', 'GLY')
+                    r2 = AA1TO3.get(seq[j - 1] if seq else 'A', 'GLY')
+                    lines.append(f"SHEET  {n:3d} {n:3d} 1 {r1:>3s} A{i + 1:4d}  "
+                                 f"{r2:>3s} A{j:4d}  0")
+                i = j
+            else:
+                i += 1
+    for k, (xyz, p) in enumerate(zip(coords, plddts), start=1):
+        x, y, z = xyz
+        res = AA1TO3.get(seq[k - 1] if seq and k - 1 < len(seq) else 'A', 'GLY')
+        lines.append(f"ATOM  {k:5d}  CA  {res:>3s} A{k:4d}    "
+                     f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 {p:6.2f}")
+    lines.append("TER")
+    lines.append("END")
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+# ------------------------------------------------------- secondary structure
+
+def assign_secondary(coords):
+    """Assign H/E/C per residue from CA geometry.
+
+    Helix: CA(i)..CA(i+3) distance ~4.5-5.8 A. Strand: CA(i)..CA(i+5)
+    distance ~13-15 A (parallel/antiparallel sheet repeat). Short runs are
+    demoted to coil. Pure CA heuristics - good enough to detect conserved
+    vs changed secondary structure between homologs.
+    """
+    coords = np.asarray(coords, dtype=float)
+    n = len(coords)
+    ss = ['C'] * n
+    if n < 6:
+        return ss
+    d3 = np.linalg.norm(coords[3:] - coords[:-3], axis=1)
+    d5 = np.linalg.norm(coords[5:] - coords[:-5], axis=1)
+    for i in range(n):
+        if i < len(d3) and 4.5 <= d3[i] <= 5.8:
+            ss[i] = 'H'
+        elif i < len(d5) and 13.0 <= d5[i] <= 15.0:
+            ss[i] = 'E'
+    out = list(ss)
+    for sym, minlen in (('H', 4), ('E', 3)):
+        i = 0
+        while i < n:
+            if ss[i] == sym:
+                j = i
+                while j < n and ss[j] == sym:
+                    j += 1
+                if j - i < minlen:
+                    for k in range(i, j):
+                        out[k] = 'C'
+                i = j
+            else:
+                i += 1
+    # smooth: a single H inside a strand run etc. stays; keep simple.
+    return out
+
+
+def ss_segments(ss):
+    """Yield (start, end, type) runs of H/E (half-open, min lengths applied)."""
+    segs = []
+    i = 0
+    while i < len(ss):
+        if ss[i] in 'HE':
+            j = i
+            while j < len(ss) and ss[j] == ss[i]:
+                j += 1
+            segs.append((i, j, ss[i]))
+            i = j
         else:
-            seg_type = seg["type"]
-        hexcol = SS_COLOR[seg_type].lstrip("#")
-        base = np.array([int(hexcol[k:k + 2], 16) / 255.0
-                         for k in (0, 2, 4)])
-        seg_cols = colors[i:j]
-        tint = (seg_cols.mean(axis=0)[:3] if len(seg_cols)
-                else colors[min(i, len(colors) - 1)][:3])
-        col = tuple(np.clip(0.45 * base + 0.55 * tint, 0, 1))
-        if seg_type == "H":
-            # helix: wide flat ribbon with darker edge passes -> shaded look
-            tangent, normal, _ = _ribbon_axes(coords, i, j)
-            off = normal * 0.85
-            ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=8.5, solid_capstyle="round", zorder=3)
-            edge = tuple(np.clip(np.array(col) * 0.65, 0, 1))
-            ax.plot(pts[:, 0] + off[0], pts[:, 1] + off[1],
-                    pts[:, 2] + off[2], color=edge,
-                    linewidth=2.6, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
-            ax.plot(pts[:, 0] - off[0], pts[:, 1] - off[1],
-                    pts[:, 2] - off[2], color=edge,
-                    linewidth=2.6, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
-        elif seg_type == "E":
-            # strand: wide ribbon + arrow head at the C-terminal end
-            tangent, normal, _ = _ribbon_axes(coords, i, j)
-            off = normal * 0.70
-            ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=6.5, solid_capstyle="round", zorder=3)
-            edge = tuple(np.clip(np.array(col) * 0.65, 0, 1))
-            ax.plot(pts[:, 0] + off[0], pts[:, 1] + off[1],
-                    pts[:, 2] + off[2], color=edge,
-                    linewidth=2.2, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
-            ax.plot(pts[:, 0] - off[0], pts[:, 1] - off[1],
-                    pts[:, 2] - off[2], color=edge,
-                    linewidth=2.2, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
-            tip = pts[-1]
-            head = pts[-1] - tangent * 2.6
-            ax.plot([head[0], tip[0]], [head[1], tip[1]],
-                    [head[2], tip[2]], color=col,
-                    linewidth=9.0, solid_capstyle="butt",
-                    zorder=3)
-        else:
-            # loop: thin tube
-            ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=2.2, solid_capstyle="round", zorder=2)
-    if termini is not None:
-        n_idx, c_idx = termini
-        for idx, label, col in ((n_idx, "N", "#58a6ff"),
-                                (c_idx, "C", "#ff7f0e")):
-            if idx is None or idx >= len(coords):
-                continue
-            p = coords[idx]
-            ax.scatter([p[0]], [p[1]], [p[2]], s=42, color=col,
-                       depthshade=False, zorder=6,
-                       edgecolors="#0d1117", linewidths=0.6)
-            ax.text(p[0], p[1], p[2], f" {label}", color=col,
-                    fontsize=8, fontweight="bold", zorder=6)
+            i += 1
+    return segs
 
 
-# --------------------------------------------------------------- rendering
+# ---------------------------------------------------------- sequence align
 
-def render(frames_meta, out_path, fps, size):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib import animation
+def sequence_pairs(seq_a, seq_b):
+    """Local BLOSUM62 correspondence between two residue sequences.
 
-    all_pts = np.vstack([f["coords"] for f in frames_meta])
-    center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2
-    spread = (all_pts.max(axis=0) - all_pts.min(axis=0)).max() / 2 * 1.12
-
-    fig = plt.figure(figsize=(size[0] / 100, size[1] / 100), dpi=100)
-    ax = fig.add_subplot(111, projection="3d")
-    fig.patch.set_facecolor(BG)
-    # fixed medium lighting: a constant light direction in VIEW space, so
-    # shading is identical on every frame and while the camera rotates
-    # (the structure never appears to rotate under a static light)
-    LIGHT_DIR = np.array([0.5, 0.6, 0.62])
-    LIGHT_DIR /= np.linalg.norm(LIGHT_DIR)
-    total = len(frames_meta)
-    print(f"[render] {total} frames -> {out_path}", file=sys.stderr)
-
-    def shade(coords, colors):
-        """Lambert-style shading with the fixed view-space light: normals
-        are approximated from the CA trace direction."""
-        coords = np.asarray(coords, dtype=float)
-        cols = np.asarray(colors, dtype=float)
-        n = min(len(coords), len(cols))
-        if n < 2:
-            return cols
-        coords = coords[:n]
-        cols = cols[:n]
-        tang = np.gradient(coords, axis=0)
-        norm = np.linalg.norm(tang, axis=1, keepdims=True)
-        norm[norm < 1e-6] = 1.0
-        tang = tang / norm
-        lam = np.clip(np.abs(tang @ LIGHT_DIR), 0.0, 1.0)
-        # medium lighting: 0.45 ambient + 0.55 diffuse
-        shade_f = 0.45 + 0.55 * lam[:, None]
-        out = np.clip(cols * shade_f, 0.0, 1.0)
-        if len(out) < len(colors):
-            pad = np.tile(out[-1:], (len(colors) - len(out), 1))
-            out = np.vstack([out, pad])
-        return out
-
-    def update(i):
-        fm = frames_meta[i]
-        ax.cla()
-        ax.set_facecolor(BG)
-        c = np.asarray(fm["coords"])
-        cols = shade(c, np.asarray(fm["colors"]))
-        ss = fm.get("ss") or "C" * len(c)
-        termini = fm.get("termini")
-        if termini is not None:
-            n_idx, c_idx = termini
-            termini = (min(n_idx, len(c) - 1), min(c_idx, len(c) - 1))
-        draw_structure(ax, c, ss, cols, termini=termini)
-        ax.set_xlim(-spread + center[0], spread + center[0])
-        ax.set_ylim(-spread + center[1], spread + center[1])
-        ax.set_zlim(-spread + center[2], spread + center[2])
-        ax.set_box_aspect((1, 1, 1))
-        ax.set_axis_off()
-        ax.set_title(fm["title"], color="#e6edf3", fontsize=12, pad=2)
-        ax.text2D(0.5, 0.03, fm["subtitle"], transform=ax.transAxes,
-                  ha="center", color="#8b949e", fontsize=9)
-        prog = i / max(total - 1, 1)
-        ax.text2D(0.5, 0.96,
-                  f"evolutionary progression  {prog * 100:.0f}%",
-                  transform=ax.transAxes, ha="center",
-                  color="#58a6ff", fontsize=9)
-        # slow rotation; lighting stays fixed because shading is view-based
-        ax.view_init(elev=18, azim=(20 + i * 0.5) % 360)
-        return []
-
-    anim = animation.FuncAnimation(fig, update, frames=total, interval=100)
-    writer = animation.PillowWriter(fps=fps)
-    anim.save(out_path, writer=writer,
-              savefig_kwargs={"facecolor": fig.get_facecolor()})
-    plt.close(fig)
-    print(f"[render] saved {out_path}", file=sys.stderr)
-
-
-def main():
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("aligned_json",
-                   help="aligned.json from the structure-aligner skill")
-    p.add_argument("-o", "--output", default="evolution.gif")
-    p.add_argument("--hold", type=int, default=25,
-                   help="frames to hold each structure")
-    p.add_argument("--morph", type=int, default=15,
-                   help="frames per morph transition")
-    p.add_argument("--fps", type=int, default=12)
-    p.add_argument("--size", type=int, nargs=2, default=(720, 720))
-    p.add_argument("--disp-max", type=float, default=4.0,
-                   help="CA displacement (A) at which a residue fully animates")
-    p.add_argument("--title", default=None,
-                   help="overall title (default: none)")
-    args = p.parse_args()
-
-    if pl is None:
-        sys.exit("proteinlib.py not found - put it next to the skills tree "
-                 "(src/proteinlib.py) or on PYTHONPATH")
-
-    with open(args.aligned_json) as f:
-        data = json.load(f)
-    structs = order_structures(data["structures"])
-    if len(structs) < 2:
-        sys.exit("Need at least 2 structures to animate")
-
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    def colors_for(s, n):
-        return pl.plddt_colors(s.get("plddts") or [70] * n, n)
-
-    # v3: correspondence for the morph is anchored through the alignment
-    # reference, so a pairwise alignment slip between two distant homologs
-    # cannot reshuffle the whole protein; N/C termini are labeled.
-    reference = next((s for s in data["structures"]
-                      if s["accession"] == data.get("reference")),
-                     structs[0])
-    mask = pl.StabilityMask(disp_max=args.disp_max)
-    frames_meta = []
-    for idx, s in enumerate(structs):
-        coords = np.asarray(s["coords"], dtype=float)
-        seq = s.get("seq") or "A" * len(coords)
-        ss = s.get("ss") or "C" * len(coords)
-        termini = (0, len(coords) - 1) if len(coords) else None
-        fm = {
-            "title": f"{LINEAGE_LABELS.get(s['lineage'], s['lineage'])}"
-                     f" \u2014 {s['species']}",
-            "subtitle": f"{s['accession']} \u00b7 {s['source']}"
-                        + (f" \u00b7 core ident "
-                           f"{s['core_identity']:.0%}"
-                           if s.get("core_identity") else ""),
-            "ss": ss,
-            "termini": termini,
-        }
-        cols = colors_for(s, len(coords))
-        for _ in range(args.hold):
-            frames_meta.append({**fm, "coords": coords, "colors": cols})
-        if idx + 1 < len(structs):
-            nxt = structs[idx + 1]
-            ncoords = np.asarray(nxt["coords"], dtype=float)
-            nseq = nxt.get("seq") or "A" * len(ncoords)
-            nss = nxt.get("ss") or "C" * len(ncoords)
-            pairs = pl.reference_pairs(s, nxt, reference)
-            pairs = [(a, b) for a, b in pairs
-                     if a < len(coords) and b < len(ncoords)]
-            weights, a_idx, b_idx = mask.weights(
-                coords, ncoords, pairs, ss, nss)
-            interp = np.asarray(pl.morph_frames(coords, ncoords, pairs,
-                                                weights, args.morph))
-            n_cols_next = colors_for(nxt, len(ncoords))
-            cols_a = cols[a_idx]
-            cols_b = n_cols_next[b_idx]
-            n_stable = int((weights < 0.15).sum())
-            print(f"[morph] {s['species']} -> {nxt['species']}: "
-                  f"{len(pairs)} pairs, {n_stable} frozen "
-                  f"({n_stable / max(len(pairs), 1):.0%})",
-                  file=sys.stderr)
-            for k in range(interp.shape[0]):
-                t = k / max(interp.shape[0] - 1, 1)
-                cols_k = cols_a * (1 - t) + cols_b * t
-                # SS per B-residue: stable pairs keep A's class, changing
-                # pairs take B's; insertions take B's class
-                b_to_pos = {b: pos for pos, b in enumerate(b_idx)}
-                ss_full = []
-                for j in range(len(ncoords)):
-                    pos = b_to_pos.get(j)
-                    if pos is None:
-                        ss_full.append(nss[j])
-                    else:
-                        w = weights[pos]
-                        ss_full.append(ss[a_idx[pos]] if w < 0.5
-                                       else nss[b_idx[pos]])
-                frames_meta.append({
-                    **{"title": (fm["title"] if t < 0.5 else
-                                 f"{LINEAGE_LABELS.get(nxt['lineage'], nxt['lineage'])}"
-                                 f" \u2014 {nxt['species']}"),
-                       "subtitle": fm["subtitle"] if t < 0.5 else
-                           f"{nxt['accession']} \u00b7 {nxt['source']}"
-                           + (f" \u00b7 core ident "
-                              f"{nxt['core_identity']:.0%}"
-                              if nxt.get("core_identity") else "")},
-                    "coords": interp[k], "colors": cols_k,
-                    "ss": "".join(ss_full),
-                    "termini": (0, len(ncoords) - 1)
-                    if len(ncoords) else None})
-    render(frames_meta, args.output, args.fps, args.size)
-    sheet = frames_meta[::args.hold + args.morph]
+    Returns a list of (i, j) residue index pairs covering the conserved
+    core. Local alignment is essential: distant homologs carry unrelated
+    terminal extensions that corrupt global alignments.
+    """
+    from Bio.Align import PairwiseAligner
+    from Bio.Align import substitution_matrices
+    aligner = PairwiseAligner()
+    aligner.mode = "local"
     try:
-        cols_n = int(np.ceil(np.sqrt(len(sheet))))
-        rows_n = int(np.ceil(len(sheet) / cols_n))
-        fig = plt.figure(figsize=(cols_n * 3, rows_n * 3), dpi=100)
-        for i, fm in enumerate(sheet, 1):
-            ax = fig.add_subplot(rows_n, cols_n, i, projection="3d")
-            c = np.asarray(fm["coords"])
-            ss = fm.get("ss") or "C" * len(c)
-            termini = fm.get("termini")
-            if termini is not None:
-                n_idx, c_idx = termini
-                termini = (min(n_idx, len(c) - 1), min(c_idx, len(c) - 1))
-            draw_structure(ax, c, ss, np.asarray(fm["colors"])[:, :3],
-                           termini=termini)
-            ax.set_axis_off()
-            ax.set_title(fm["title"], fontsize=7, color="#e6edf3")
-            ax.view_init(elev=18, azim=30)
-        fig.patch.set_facecolor(BG)
-        plt.tight_layout()
-        sheet_path = os.path.splitext(args.output)[0] + "_sheet.png"
-        plt.savefig(sheet_path, facecolor=fig.get_facecolor())
-        plt.close(fig)
-        print(f"[render] frame sheet -> {sheet_path}", file=sys.stderr)
-    except Exception as e:
-        print(f"[warn] frame sheet failed: {e}", file=sys.stderr)
+        aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+    except Exception:
+        pass
+    aligner.open_gap_score = -11
+    aligner.extend_gap_score = -1
+    try:
+        alignment = aligner.align(seq_a, seq_b)[0]
+    except Exception:
+        n = min(len(seq_a), len(seq_b))
+        return list(zip(range(n), range(n)))
+    pairs = []
+    i_a, i_b = 0, 0
+    for a_range, b_range in zip(alignment.aligned[0], alignment.aligned[1]):
+        a0, a1 = a_range
+        b0, b1 = b_range
+        while i_a < a0:
+            i_a += 1
+        while i_b < b0:
+            i_b += 1
+        while i_a < a1 and i_b < b1:
+            pairs.append((i_a, i_b))
+            i_a += 1
+            i_b += 1
+    if len(pairs) < 50:
+        n = min(len(seq_a), len(seq_b))
+        pairs = list(zip(range(n), range(n)))
+    return pairs
 
 
-if __name__ == "__main__":
-    main()
+def core_identity(seq_a, seq_b, pairs):
+    if not pairs:
+        return 0.0
+    same = sum(1 for i, j in pairs if seq_a[i] == seq_b[j])
+    return same / len(pairs)
+
+
+# ---------------------------------------------------------------- Kabsch
+
+def kabsch(mobile, target):
+    """Superpose mobile onto target; returns (rotation, translation).
+
+    Convention: transformed = mobile @ rotation + translation.
+    """
+    mob = np.asarray(mobile, dtype=float)
+    tgt = np.asarray(target, dtype=float)
+    mob_c = mob - mob.mean(axis=0)
+    tgt_c = tgt - tgt.mean(axis=0)
+    cov = mob_c.T @ tgt_c
+    u, _, vt = np.linalg.svd(cov)
+    d = np.sign(np.linalg.det(u @ vt))
+    corr = np.diag([1.0, 1.0, d])
+    r = u @ corr @ vt
+    shift = tgt.mean(axis=0) - mob.mean(axis=0) @ r
+    return r, shift
+
+
+def rmsd(a, b):
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    return float(np.sqrt(np.mean(np.sum((a - b) ** 2, axis=1))))
+
+
+def superpose(mobile, reference, core_iterations=4):
+    """Superpose mobile onto reference via sequence-matched CA pairs with
+    iterative core refinement (conserved core drives the alignment)."""
+    pairs = sequence_pairs(mobile["seq"], reference["seq"])
+    if pairs is None:
+        pairs = [(i, i) for i in range(min(len(mobile["coords"]),
+                                           len(reference["coords"])))]
+    m_idx = np.array([p[0] for p in pairs])
+    r_idx = np.array([p[1] for p in pairs])
+    m_idx = m_idx[m_idx < len(mobile["coords"])]
+    r_idx = r_idx[r_idx < len(reference["coords"])]
+    n = min(len(m_idx), len(r_idx))
+    m_idx, r_idx = m_idx[:n], r_idx[:n]
+    r, shift = kabsch(mobile["coords"][m_idx], reference["coords"][r_idx])
+    keep = np.ones(len(m_idx), dtype=bool)
+    for _ in range(core_iterations):
+        dist = np.sqrt(np.sum(
+            (mobile["coords"][m_idx] @ r + shift
+             - reference["coords"][r_idx]) ** 2, axis=1))
+        median = np.median(dist[keep])
+        new_keep = dist <= max(2.0 * median, median + 4.0)
+        if new_keep.sum() < 50 or (new_keep == keep).all():
+            break
+        keep = new_keep
+        r, shift = kabsch(mobile["coords"][m_idx[keep]],
+                          reference["coords"][r_idx[keep]])
+    fit = rmsd(mobile["coords"][m_idx[keep]] @ r + shift,
+               reference["coords"][r_idx[keep]])
+    new_coords = mobile["coords"] @ r + shift
+    return new_coords, fit, r, shift
+
+
+# -------------------------------------------------------- stability mask
+
+class StabilityMask:
+    """Per-residue morph weights between two structures.
+
+    For each corresponding residue pair (i in A, j in B) we compute:
+      displacement  - CA distance between A and B after superposition
+                      (both structures already share a common frame from
+                      the aligner; this measures local divergence)
+      ss_change     - True if the secondary-structure class differs
+
+    weight = 0.0  -> frozen (stable + same SSE): residue does not move
+    weight = 1.0  -> fully animated (large displacement or SSE change)
+
+    Residues present in only one structure get fade weights handled by
+    the caller (insertions fade in, deletions fade out).
+    """
+
+    def __init__(self, disp_max=4.0, disp_min=1.0):
+        # displacement (A) below which a structurally-conserved residue is
+        # fully frozen, and at/above which it is fully animated
+        self.disp_max = disp_max
+        self.disp_min = disp_min
+
+    def weights(self, coords_a, coords_b, pairs, ss_a=None, ss_b=None):
+        coords_a = np.asarray(coords_a, dtype=float)
+        coords_b = np.asarray(coords_b, dtype=float)
+        pairs = [(a, b) for a, b in pairs
+                 if a < len(coords_a) and b < len(coords_b)]
+        a_idx = np.array([p[0] for p in pairs], dtype=int)
+        b_idx = np.array([p[1] for p in pairs], dtype=int)
+        disp = np.linalg.norm(coords_a[a_idx] - coords_b[b_idx], axis=1)
+        # conserved secondary structure + small displacement -> frozen;
+        # ramps up to full animation at disp_max
+        w_disp = np.clip((disp - self.disp_min)
+                         / max(self.disp_max - self.disp_min, 1e-6),
+                         0.0, 1.0)
+        if ss_a is not None and ss_b is not None:
+            ss_change = np.array([1.0 if ss_a[a] != ss_b[b] else 0.0
+                                  for a, b in zip(a_idx, b_idx)])
+        else:
+            ss_change = np.zeros(len(pairs))
+        # an SSE change always animates fully (new/lost helix or strand);
+        # otherwise the displacement ramp decides
+        w = np.maximum(w_disp, ss_change)
+        # smoothstep for a softer transition edge
+        w = w * w * (3.0 - 2.0 * w)
+        return w, a_idx, b_idx
+
+
+def ease(t):
+    """Smoothstep easing for morph parameter t in [0, 1]."""
+    t = min(max(t, 0.0), 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+# ------------------------------------------- reference-anchored morphing
+
+def reference_pairs(struct_a, struct_b, reference):
+    """Correspondence between two structures anchored through a common
+    reference structure.
+
+    Direct pairwise local alignment between two distant homologs can slip
+    (especially over long terminal extensions), which makes the morph look
+    like the whole protein reshuffles. Anchoring both structures through
+    the alignment reference (the structure all coordinates were superposed
+    onto) yields a consistent residue correspondence for the morph.
+
+    struct_a/struct_b: dicts with "seq" (per-coordinate residue string)
+    reference: dict with "seq" and "coords"
+    Returns a list of (i, j) index pairs into a/b's coordinate arrays.
+    """
+    ref_seq = reference.get("seq") or "A" * len(reference["coords"])
+    pa = sequence_pairs(struct_a.get("seq", ""), ref_seq)
+    pb = sequence_pairs(struct_b.get("seq", ""), ref_seq)
+    a_of_ref = {}
+    for a, r in pa:
+        if a < len(struct_a.get("coords", ())):
+            a_of_ref[r] = a
+    b_of_ref = {}
+    for b, r in pb:
+        if b < len(struct_b.get("coords", ())):
+            b_of_ref[r] = b
+    common = sorted(set(a_of_ref) & set(b_of_ref))
+    return [(a_of_ref[r], b_of_ref[r]) for r in common]
+
+
+def chain_orientation_ok(struct, reference):
+    """Sanity check: the structure's coordinate chain must run in the same
+    direction as the reference (N->C both, or C->N both).
+
+    The check compares, in the superposed common frame, how far the
+    structure's coordinate ends sit from the reference's N- and C-terminal
+    regions. A correctly oriented chain has both ends near their
+    corresponding reference ends; a reversed chain has the coordinate
+    head near the reference C-terminus and vice versa. Returns True if the
+    orientation matches (or the structure is too short to tell).
+    """
+    coords = np.asarray(struct.get("coords", ()), dtype=float)
+    ref_coords = np.asarray(reference.get("coords", ()), dtype=float)
+    if len(coords) < 24 or len(ref_coords) < 24:
+        return True
+    pairs = reference_pairs(struct, reference, reference)
+    if not pairs:
+        return True
+    a_idx = np.array([p[0] for p in pairs])
+    r_idx = np.array([p[1] for p in pairs])
+    n = min(len(a_idx), len(r_idx))
+    a_idx, r_idx = a_idx[:n], r_idx[:n]
+    # superpose struct onto reference using the sequence correspondence
+    r, shift = kabsch(coords[a_idx], ref_coords[r_idx])
+    moved = coords @ r + shift
+    k = min(12, len(ref_coords) // 4)
+    head_ref = ref_coords[:k]
+    tail_ref = ref_coords[-k:]
+    # distance from each structure end to the NEAREST residue of each
+    # reference end region (robust to local wiggle at the termini)
+    def region_dist(pt, region):
+        return float(np.min(np.linalg.norm(region - pt, axis=1)))
+    d_head = region_dist(moved[0], head_ref)
+    d_tail = region_dist(moved[-1], tail_ref)
+    d_head_rev = region_dist(moved[0], tail_ref)
+    d_tail_rev = region_dist(moved[-1], head_ref)
+    return (d_head + d_tail) <= (d_head_rev + d_tail_rev)
+
+
+# ------------------------------------------------------------ morph frame
+
+def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
+                 fade_in=None):
+    """Generate n_frames masked-morph frames (reference = B indexing).
+
+    Stable pairs (weight ~0) are anchored to A's position for the whole
+    morph and only snap to B at the very end (a sub-Angstrom correction,
+    invisible in practice), so a conserved helix visibly stays put.
+    Changing pairs travel the full A->B distance with smoothstep easing.
+    B-only residues (insertions) grow in from the morphing position of
+    their nearest paired neighbor (not the global centroid, which makes
+    the protein look like it expands from the inner center outwards).
+
+    fade_in: optional boolean array over B marking insertions explicitly.
+    """
+    coords_a = np.asarray(coords_a, dtype=float)
+    coords_b = np.asarray(coords_b, dtype=float)
+    n_b = len(coords_b)
+    a_idx = np.array([p[0] for p in pairs], dtype=int)
+    b_idx = np.array([p[1] for p in pairs], dtype=int)
+    w = np.asarray(weights, dtype=float)
+    paired_b = np.zeros(n_b, dtype=bool)
+    paired_b[b_idx] = True
+    centroid_a = coords_a.mean(axis=0)
+    frozen = w < 0.15
+    # Precompute nearest paired neighbor for each B residue (for insertions)
+    ins = ~paired_b
+    if fade_in is not None:
+        ins = ins | np.asarray(fade_in, dtype=bool)
+    nearest_paired = np.full(n_b, -1, dtype=int)
+    for j in range(n_b):
+        if paired_b[j]:
+            nearest_paired[j] = j
+    # Forward/backward fill: each insertion gets the nearest paired residue
+    last = -1
+    for j in range(n_b):
+        if nearest_paired[j] >= 0:
+            last = j
+        elif last >= 0:
+            nearest_paired[j] = last
+    last = -1
+    for j in range(n_b - 1, -1, -1):
+        if nearest_paired[j] >= 0:
+            last = j
+        elif last >= 0:
+            nearest_paired[j] = last
+    frames = []
+    for k in range(n_frames):
+        t = ease(k / max(n_frames - 1, 1))
+        out = coords_b.copy()
+        eff = w * t
+        out[b_idx] = (coords_a[a_idx] * (1 - eff)[:, None]
+                      + coords_b[b_idx] * eff[:, None])
+        # frozen residues hold A's position until the very end, then settle
+        if frozen.any():
+            settle = 1.0 if t >= 1.0 else 0.0
+            out[b_idx[frozen]] = (coords_a[a_idx[frozen]] * (1 - settle)
+                                  + coords_b[b_idx[frozen]] * settle)
+        if ins.any():
+            ins_idx = np.where(ins)[0]
+            anchors = nearest_paired[ins_idx]
+            # anchor positions in the current frame (already morphed above)
+            anchor_pos = out[anchors]
+            out[ins_idx] = (anchor_pos * (1 - t)
+                            + coords_b[ins_idx] * t)
+        frames.append(out)
+    # exact endpoints
+    frames[0][b_idx] = coords_a[a_idx]
+    frames[-1] = coords_b.copy()
+    return frames
+
+
+# ---------------------------------------------------------- ribbon data
+
+def ribbon_segments(coords, ss):
+    """Split a CA trace into ribbon segments per SSE run.
+
+    Returns a list of dicts: {type: 'H'|'E'|'C', idx: [i, j), coords}.
+    Helices and strands become flat ribbon pieces; loops become a thin
+    tube. Used by the matplotlib renderer to draw a cartoon-style ribbon.
+    """
+    coords = np.asarray(coords, dtype=float)
+    segs = []
+    for (i, j, typ) in ss_segments(ss):
+        segs.append({"type": typ, "idx": (i, j),
+                     "coords": coords[i:j]})
+    # coil = everything not covered
+    covered = np.zeros(len(coords), dtype=bool)
+    for s in segs:
+        covered[s["idx"][0]:s["idx"][1]] = True
+    i = 0
+    n = len(coords)
+    while i < n:
+        if not covered[i]:
+            j = i
+            while j < n and not covered[j]:
+                j += 1
+            segs.append({"type": 'C', "idx": (i, j), "coords": coords[i:j]})
+            i = j
+        else:
+            i += 1
+    segs.sort(key=lambda s: s["idx"][0])
+    return segs
+
+
+# ------------------------------------------------------------- colors
+
+def plddt_colors(plddts, n=None):
+    """RdYlGn colors from per-residue pLDDT, padded/truncated to n."""
+    import matplotlib.pyplot as plt
+    cmap = plt.get_cmap("RdYlGn")
+    p = np.asarray(plddts, dtype=float)
+    if n is not None:
+        if len(p) < n:
+            p = np.concatenate([p, np.full(n - len(p), 70.0)])
+        else:
+            p = p[:n]
+    if len(p) == 0:
+        p = np.array([70.0])
+    q = np.clip(p / 100.0, 0, 1)
+    return cmap(0.15 + 0.85 * q)

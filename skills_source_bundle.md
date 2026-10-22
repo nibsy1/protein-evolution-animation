@@ -194,13 +194,16 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v12: parallel-transport frames fix oval/twisted helix ribbons; insertions
+  grow from nearest paired neighbor (not global centroid) — no more
+  "expanding from inner center" on distant species transitions.
   v11: variable-radius ribbon tube (helix wide/flat, strand wide, loop thin)
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 11
+version: 12
 ---
-# Interactive Evolution Viewer (v11)
+# Interactive Evolution Viewer (v12)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -213,6 +216,22 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v12
+
+- **Parallel-transport frames** — the ribbon tube's cross-section frame now
+  follows the curve using parallel transport (projecting the previous frame's
+  normal onto the plane perpendicular to the new tangent). This eliminates the
+  oval/twisted appearance of helix ribbons that occurred when the binormal was
+  locked to the XZ plane (`B = (N.z, 0, -N.x)`), which broke down for helices
+  running along the Y axis.
+- **Insertions grow from nearest paired neighbor** — when a species has residues
+  not present in the source (insertions, up to 34% for distant pairs like
+  Chlamydomonas ↔ Arabidopsis), they now grow from the morphing position of the
+  nearest paired residue along the chain, not from the global centroid. This
+  eliminates the "expanding from inner center outwards" effect on transitions
+  between dissimilar structures. Same fix applied to `proteinlib.morph_frames`
+  so the GIF renderer matches.
 
 ## What's new in v11
 
@@ -286,7 +305,7 @@ Browser: WebGL.
 
 ```
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v11)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v12)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -307,6 +326,11 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v12 PARALLEL-TRANSPORT FRAMES + LOCAL INSERTION GROWTH: the tube's
+    cross-section frame follows the curve via parallel transport (fixes
+    oval/twisted helix ribbons), and insertions grow from the nearest
+    paired neighbor's morphing position instead of the global centroid
+    (fixes "expanding from inner center" on distant-species transitions).
   - v11 VARIABLE-RADIUS TUBE + NO REBUILD AT MORPH END: the tube's
     elliptical cross-section (width/height) cross-fades with SS changes
     during the morph, and at f=1 the tube snaps in place (no clearGroup /
@@ -866,23 +890,25 @@ function smoothstep(t) { t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); }
 
 // masked morph frame: stable residues hold the source position until the
 // very end; changing residues travel source->target with eased, weight-
-// scaled progress; insertions grow in from the source centroid.
+// scaled progress; insertions grow in from the morphing position of their
+// nearest paired neighbor (not the global centroid, which looks like the
+// protein expands from the inner center outwards).
 function buildMorphCoords(src, tgt, f, weights) {
   const sc = coordsOf(src);
   const tc = coordsOf(tgt);
   const refToSrc = {};
   src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
   const tgtToRef = tgtRefMap(tgt);
-  const cx = sc.reduce((acc, p) => acc + p[0], 0) / sc.length;
-  const cy = sc.reduce((acc, p) => acc + p[1], 0) / sc.length;
-  const cz = sc.reduce((acc, p) => acc + p[2], 0) / sc.length;
   const t = smoothstep(f);
   const out = new Array(tc.length);
+  // Pass 1: compute positions for paired residues
+  const isPaired = new Array(tc.length).fill(false);
   for (let i = 0; i < tc.length; i++) {
     const b = tc[i];
     const r = tgtToRef[i];
     const sIdx = r !== null ? refToSrc[r] : undefined;
     if (sIdx !== undefined && sIdx !== null && sc[sIdx]) {
+      isPaired[i] = true;
       const a = sc[sIdx];
       const w = weights[i];
       if (w < 0.15) {
@@ -893,14 +919,32 @@ function buildMorphCoords(src, tgt, f, weights) {
                   a[2] + (b[2]-a[2]) * settle];
       } else {
         // eased progress; at t=1 every residue lands exactly on B
-        // (matches the GIF renderer's morph_frames endpoint snap)
         const eff = t >= 1 ? 1 : w * t;
         out[i] = [a[0] + (b[0]-a[0]) * eff,
                   a[1] + (b[1]-a[1]) * eff,
                   a[2] + (b[2]-a[2]) * eff];
       }
+    }
+  }
+  // Pass 2: insertions grow from nearest paired neighbor's morphing position
+  for (let i = 0; i < tc.length; i++) {
+    if (isPaired[i]) continue;
+    const b = tc[i];
+    // find nearest paired residue (search outward)
+    let anchorPos = null;
+    for (let d = 1; d < tc.length; d++) {
+      if (i - d >= 0 && isPaired[i - d]) { anchorPos = out[i - d]; break; }
+      if (i + d < tc.length && isPaired[i + d]) { anchorPos = out[i + d]; break; }
+    }
+    if (anchorPos) {
+      out[i] = [anchorPos[0] + (b[0]-anchorPos[0]) * t,
+                anchorPos[1] + (b[1]-anchorPos[1]) * t,
+                anchorPos[2] + (b[2]-anchorPos[2]) * t];
     } else {
-      // insertion: grow in from the source centroid
+      // fallback: source centroid
+      const cx = sc.reduce((acc, p) => acc + p[0], 0) / sc.length;
+      const cy = sc.reduce((acc, p) => acc + p[1], 0) / sc.length;
+      const cz = sc.reduce((acc, p) => acc + p[2], 0) / sc.length;
       out[i] = [cx + (b[0]-cx) * t,
                 cy + (b[1]-cy) * t,
                 cz + (b[2]-cz) * t];
@@ -1022,18 +1066,37 @@ function updateTubeGeometry(coordsArr, ss) {
   t.curve.points = pts;
   t.ss = ss;
   const pos = t.mesh.geometry.attributes.position;
-  const v = new THREE.Vector3();
   const N = new THREE.Vector3();
-  const B = new THREE.Vector3();
   const P = new THREE.Vector3();
+  const Pprev = new THREE.Vector3();
+  // Parallel-transport frame: start with a reference normal, then rotate
+  // it along the curve to follow the local geometry. This keeps the
+  // ribbon's flat face consistently oriented (no twisting / oval artifacts).
+  let B = new THREE.Vector3();
+  const v = new THREE.Vector3();
+  const tmp = new THREE.Vector3();
+  const firstTangent = new THREE.Vector3();
+  try { t.curve.getTangent(0, firstTangent); } catch (e) { firstTangent.set(0, 0, 1); }
+  firstTangent.normalize();
+  const refUp = Math.abs(firstTangent.y) > 0.95
+    ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  B.crossVectors(firstTangent, refUp).normalize();
   for (let ring = 0; ring <= t.tubular; ring++) {
     const i = ring / t.tubular;
     t.curve.getPoint(i, P);
-    try { t.curve.getTangent(i, N); } catch (e) { N.set(0, 0, 1); }
+    try { t.curve.getTangent(i, N); } catch (e) { N.copy(firstTangent); }
     N.normalize();
-    B.set(N.z, 0, -N.x).normalize();
-    if (!isFinite(B.x) || B.lengthSq() < 0.5) B.set(0, N.z, -N.y);
-    B.normalize();
+    if (ring > 0) {
+      // Parallel transport: project previous B onto plane perp to N
+      const dotBN = B.dot(N);
+      B.x -= dotBN * N.x; B.y -= dotBN * N.y; B.z -= dotBN * N.z;
+      if (B.lengthSq() < 1e-6) {
+        // Degenerate: pick any perpendicular
+        B.crossVectors(N, refUp).normalize();
+      } else {
+        B.normalize();
+      }
+    }
     v.crossVectors(N, B).normalize();
     // SS class at this ring position
     const resi = Math.min(pts.length - 1,

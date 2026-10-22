@@ -1573,23 +1573,25 @@ function smoothstep(t) { t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); }
 
 // masked morph frame: stable residues hold the source position until the
 // very end; changing residues travel source->target with eased, weight-
-// scaled progress; insertions grow in from the source centroid.
+// scaled progress; insertions grow in from the morphing position of their
+// nearest paired neighbor (not the global centroid, which looks like the
+// protein expands from the inner center outwards).
 function buildMorphCoords(src, tgt, f, weights) {
   const sc = coordsOf(src);
   const tc = coordsOf(tgt);
   const refToSrc = {};
   src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
   const tgtToRef = tgtRefMap(tgt);
-  const cx = sc.reduce((acc, p) => acc + p[0], 0) / sc.length;
-  const cy = sc.reduce((acc, p) => acc + p[1], 0) / sc.length;
-  const cz = sc.reduce((acc, p) => acc + p[2], 0) / sc.length;
   const t = smoothstep(f);
   const out = new Array(tc.length);
+  // Pass 1: compute positions for paired residues
+  const isPaired = new Array(tc.length).fill(false);
   for (let i = 0; i < tc.length; i++) {
     const b = tc[i];
     const r = tgtToRef[i];
     const sIdx = r !== null ? refToSrc[r] : undefined;
     if (sIdx !== undefined && sIdx !== null && sc[sIdx]) {
+      isPaired[i] = true;
       const a = sc[sIdx];
       const w = weights[i];
       if (w < 0.15) {
@@ -1600,14 +1602,32 @@ function buildMorphCoords(src, tgt, f, weights) {
                   a[2] + (b[2]-a[2]) * settle];
       } else {
         // eased progress; at t=1 every residue lands exactly on B
-        // (matches the GIF renderer's morph_frames endpoint snap)
         const eff = t >= 1 ? 1 : w * t;
         out[i] = [a[0] + (b[0]-a[0]) * eff,
                   a[1] + (b[1]-a[1]) * eff,
                   a[2] + (b[2]-a[2]) * eff];
       }
+    }
+  }
+  // Pass 2: insertions grow from nearest paired neighbor's morphing position
+  for (let i = 0; i < tc.length; i++) {
+    if (isPaired[i]) continue;
+    const b = tc[i];
+    // find nearest paired residue (search outward)
+    let anchorPos = null;
+    for (let d = 1; d < tc.length; d++) {
+      if (i - d >= 0 && isPaired[i - d]) { anchorPos = out[i - d]; break; }
+      if (i + d < tc.length && isPaired[i + d]) { anchorPos = out[i + d]; break; }
+    }
+    if (anchorPos) {
+      out[i] = [anchorPos[0] + (b[0]-anchorPos[0]) * t,
+                anchorPos[1] + (b[1]-anchorPos[1]) * t,
+                anchorPos[2] + (b[2]-anchorPos[2]) * t];
     } else {
-      // insertion: grow in from the source centroid
+      // fallback: source centroid
+      const cx = sc.reduce((acc, p) => acc + p[0], 0) / sc.length;
+      const cy = sc.reduce((acc, p) => acc + p[1], 0) / sc.length;
+      const cz = sc.reduce((acc, p) => acc + p[2], 0) / sc.length;
       out[i] = [cx + (b[0]-cx) * t,
                 cy + (b[1]-cy) * t,
                 cz + (b[2]-cz) * t];
@@ -1729,18 +1749,37 @@ function updateTubeGeometry(coordsArr, ss) {
   t.curve.points = pts;
   t.ss = ss;
   const pos = t.mesh.geometry.attributes.position;
-  const v = new THREE.Vector3();
   const N = new THREE.Vector3();
-  const B = new THREE.Vector3();
   const P = new THREE.Vector3();
+  const Pprev = new THREE.Vector3();
+  // Parallel-transport frame: start with a reference normal, then rotate
+  // it along the curve to follow the local geometry. This keeps the
+  // ribbon's flat face consistently oriented (no twisting / oval artifacts).
+  let B = new THREE.Vector3();
+  const v = new THREE.Vector3();
+  const tmp = new THREE.Vector3();
+  const firstTangent = new THREE.Vector3();
+  try { t.curve.getTangent(0, firstTangent); } catch (e) { firstTangent.set(0, 0, 1); }
+  firstTangent.normalize();
+  const refUp = Math.abs(firstTangent.y) > 0.95
+    ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  B.crossVectors(firstTangent, refUp).normalize();
   for (let ring = 0; ring <= t.tubular; ring++) {
     const i = ring / t.tubular;
     t.curve.getPoint(i, P);
-    try { t.curve.getTangent(i, N); } catch (e) { N.set(0, 0, 1); }
+    try { t.curve.getTangent(i, N); } catch (e) { N.copy(firstTangent); }
     N.normalize();
-    B.set(N.z, 0, -N.x).normalize();
-    if (!isFinite(B.x) || B.lengthSq() < 0.5) B.set(0, N.z, -N.y);
-    B.normalize();
+    if (ring > 0) {
+      // Parallel transport: project previous B onto plane perp to N
+      const dotBN = B.dot(N);
+      B.x -= dotBN * N.x; B.y -= dotBN * N.y; B.z -= dotBN * N.z;
+      if (B.lengthSq() < 1e-6) {
+        // Degenerate: pick any perpendicular
+        B.crossVectors(N, refUp).normalize();
+      } else {
+        B.normalize();
+      }
+    }
     v.crossVectors(N, B).normalize();
     // SS class at this ring position
     const resi = Math.min(pts.length - 1,
@@ -4029,7 +4068,9 @@ def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
     morph and only snap to B at the very end (a sub-Angstrom correction,
     invisible in practice), so a conserved helix visibly stays put.
     Changing pairs travel the full A->B distance with smoothstep easing.
-    B-only residues (insertions) grow in from A's centroid.
+    B-only residues (insertions) grow in from the morphing position of
+    their nearest paired neighbor (not the global centroid, which makes
+    the protein look like it expands from the inner center outwards).
 
     fade_in: optional boolean array over B marking insertions explicitly.
     """
@@ -4043,6 +4084,27 @@ def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
     paired_b[b_idx] = True
     centroid_a = coords_a.mean(axis=0)
     frozen = w < 0.15
+    # Precompute nearest paired neighbor for each B residue (for insertions)
+    ins = ~paired_b
+    if fade_in is not None:
+        ins = ins | np.asarray(fade_in, dtype=bool)
+    nearest_paired = np.full(n_b, -1, dtype=int)
+    for j in range(n_b):
+        if paired_b[j]:
+            nearest_paired[j] = j
+    # Forward/backward fill: each insertion gets the nearest paired residue
+    last = -1
+    for j in range(n_b):
+        if nearest_paired[j] >= 0:
+            last = j
+        elif last >= 0:
+            nearest_paired[j] = last
+    last = -1
+    for j in range(n_b - 1, -1, -1):
+        if nearest_paired[j] >= 0:
+            last = j
+        elif last >= 0:
+            nearest_paired[j] = last
     frames = []
     for k in range(n_frames):
         t = ease(k / max(n_frames - 1, 1))
@@ -4055,14 +4117,13 @@ def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
             settle = 1.0 if t >= 1.0 else 0.0
             out[b_idx[frozen]] = (coords_a[a_idx[frozen]] * (1 - settle)
                                   + coords_b[b_idx[frozen]] * settle)
-        if fade_in is not None:
-            ins = (~paired_b) | np.asarray(fade_in, dtype=bool)
-        else:
-            ins = ~paired_b
         if ins.any():
-            # insertions grow in from A's centroid over the whole morph
-            out[ins] = (centroid_a[None, :] * (1 - t)
-                        + coords_b[ins] * t)
+            ins_idx = np.where(ins)[0]
+            anchors = nearest_paired[ins_idx]
+            # anchor positions in the current frame (already morphed above)
+            anchor_pos = out[anchors]
+            out[ins_idx] = (anchor_pos * (1 - t)
+                            + coords_b[ins_idx] * t)
         frames.append(out)
     # exact endpoints
     frames[0][b_idx] = coords_a[a_idx]

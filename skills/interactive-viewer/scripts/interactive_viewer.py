@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v11)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v12)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -20,6 +20,11 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v12 PARALLEL-TRANSPORT FRAMES + LOCAL INSERTION GROWTH: the tube's
+    cross-section frame follows the curve via parallel transport (fixes
+    oval/twisted helix ribbons), and insertions grow from the nearest
+    paired neighbor's morphing position instead of the global centroid
+    (fixes "expanding from inner center" on distant-species transitions).
   - v11 VARIABLE-RADIUS TUBE + NO REBUILD AT MORPH END: the tube's
     elliptical cross-section (width/height) cross-fades with SS changes
     during the morph, and at f=1 the tube snaps in place (no clearGroup /

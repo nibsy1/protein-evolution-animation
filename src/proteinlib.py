@@ -400,7 +400,9 @@ def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
     morph and only snap to B at the very end (a sub-Angstrom correction,
     invisible in practice), so a conserved helix visibly stays put.
     Changing pairs travel the full A->B distance with smoothstep easing.
-    B-only residues (insertions) grow in from A's centroid.
+    B-only residues (insertions) grow in from the morphing position of
+    their nearest paired neighbor (not the global centroid, which makes
+    the protein look like it expands from the inner center outwards).
 
     fade_in: optional boolean array over B marking insertions explicitly.
     """
@@ -414,6 +416,27 @@ def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
     paired_b[b_idx] = True
     centroid_a = coords_a.mean(axis=0)
     frozen = w < 0.15
+    # Precompute nearest paired neighbor for each B residue (for insertions)
+    ins = ~paired_b
+    if fade_in is not None:
+        ins = ins | np.asarray(fade_in, dtype=bool)
+    nearest_paired = np.full(n_b, -1, dtype=int)
+    for j in range(n_b):
+        if paired_b[j]:
+            nearest_paired[j] = j
+    # Forward/backward fill: each insertion gets the nearest paired residue
+    last = -1
+    for j in range(n_b):
+        if nearest_paired[j] >= 0:
+            last = j
+        elif last >= 0:
+            nearest_paired[j] = last
+    last = -1
+    for j in range(n_b - 1, -1, -1):
+        if nearest_paired[j] >= 0:
+            last = j
+        elif last >= 0:
+            nearest_paired[j] = last
     frames = []
     for k in range(n_frames):
         t = ease(k / max(n_frames - 1, 1))
@@ -426,14 +449,13 @@ def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
             settle = 1.0 if t >= 1.0 else 0.0
             out[b_idx[frozen]] = (coords_a[a_idx[frozen]] * (1 - settle)
                                   + coords_b[b_idx[frozen]] * settle)
-        if fade_in is not None:
-            ins = (~paired_b) | np.asarray(fade_in, dtype=bool)
-        else:
-            ins = ~paired_b
         if ins.any():
-            # insertions grow in from A's centroid over the whole morph
-            out[ins] = (centroid_a[None, :] * (1 - t)
-                        + coords_b[ins] * t)
+            ins_idx = np.where(ins)[0]
+            anchors = nearest_paired[ins_idx]
+            # anchor positions in the current frame (already morphed above)
+            anchor_pos = out[anchors]
+            out[ins_idx] = (anchor_pos * (1 - t)
+                            + coords_b[ins_idx] * t)
         frames.append(out)
     # exact endpoints
     frames[0][b_idx] = coords_a[a_idx]

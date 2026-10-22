@@ -4,8 +4,8 @@
   "description": "ECA3 (Calcium-transporting ATPase 3, ER-type) evolutionary animation across 16 plant species",
   "pipeline_versions": {
     "structure_aligner": "v3 (threaded-seq fix)",
-    "morph_animation": "v3 (reference-anchored + N/C labels + thick ribbons)",
-    "interactive_viewer": "v11 (variable-radius tube, no rebuild at morph end, pure hydropathy coloring)"
+    "morph_animation": "v3 (reference-anchored + N/C labels + thick ribbons + local insertion growth)",
+    "interactive_viewer": "v12 (parallel-transport frames, local insertion growth, variable-radius tube, no rebuild at morph end, pure hydropathy coloring)"
   },
   "reference": "PWZ53365.1 (Zea mays)",
   "n_structures": 16,
@@ -43,8 +43,8 @@
       "sha256": "2395ce2b38338666"
     },
     "viewer.html": {
-      "bytes": 1884170,
-      "sha256": "448bd00ec8c7c67f"
+      "bytes": 1885876,
+      "sha256": "a726ae5641a54664"
     }
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v10)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v11)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -8,10 +8,10 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
   - an interactive phylogenetic tree (SVG) of the species, colored by
     lineage; clicking a species morphs the structure
   - a Three.js ribbon-style 3D viewer (works from CA-only traces):
-    helices as wide ribbons, strands as arrows, loops as a thin tube,
-    rotatable/zoomable with the mouse
-  - per-residue coloring tinted by smoothed Kyte-Doolittle hydropathy
-    (blue hydrophilic -> white -> orange hydrophobic)
+    variable-radius tube with per-ring elliptical cross-sections
+    (helix wide/flat, strand wide, loop thin), rotatable/zoomable
+  - per-residue PURE HYDRopathy coloring (blue hydrophilic -> white ->
+    red hydrophobic), no SS-class tint
   - consistent MEDIUM lighting: hemisphere + directional lights attached
     to the camera at fixed medium intensity, so shading is identical while
     orbiting
@@ -20,13 +20,13 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
-  - v10 SMOOTH VIEWER MORPH (matches the GIF): the morph runs ~1 second
-    with smoothstep time-easing, and per-residue colors + secondary-
-    structure cross-fade smoothly while the chain moves (the old viewer
-    rebuilt the tube with the target's colors at morph start, which made
-    the transition look wonky). N-/C-termini are marked with labeled
-    spheres on every structure.
-  - NO membrane visualization (removed in v7; template asset restored in v8, version bump in v9)
+  - v11 VARIABLE-RADIUS TUBE + NO REBUILD AT MORPH END: the tube's
+    elliptical cross-section (width/height) cross-fades with SS changes
+    during the morph, and at f=1 the tube snaps in place (no clearGroup /
+    showStructure) so the camera orientation is preserved — no more
+    broken-looking morph or orientation jump at the end.
+  - N-/C-termini are marked with labeled spheres on every structure.
+  - NO membrane visualization (removed in v7; template asset restored in v8)
 
 The output is one self-contained HTML file (Three.js from CDN).
 """

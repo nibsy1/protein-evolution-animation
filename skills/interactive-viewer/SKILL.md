@@ -2,14 +2,17 @@
 name: interactive-viewer
 description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   rotatable 3D ribbon-style structure (Three.js, works from CA-only traces) with
-  consistent medium camera-attached lighting, hydropathy-tinted SS coloring, and a
-  stability-masked smooth morph on species selection. No membrane visualization.
-  Single self-contained HTML from aligned.json (structure-aligner v2).
-  v10: smooth ~1s eased morph with color/SS cross-fade (matches the GIF),
-  N-/C-terminus markers.
-version: 10
+  consistent medium camera-attached lighting, pure hydropathy coloring (blue
+  hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
+  on species selection. No membrane visualization. Single self-contained HTML
+  from aligned.json (structure-aligner v2).
+  v11: variable-radius ribbon tube (helix wide/flat, strand wide, loop thin)
+  replaces separate helix boxes + strand arrows — no more broken morph rendering.
+  No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
+  coloring. SS legend. N-/C-terminus markers.
+version: 11
 ---
-# Interactive Evolution Viewer (v10)
+# Interactive Evolution Viewer (v11)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -23,12 +26,23 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
 
-## What's new in v9
+## What's new in v11
 
-- **Ribbon style** — helices render as wide flat ribbon boxes, strands as flat
-  arrows (shaft + cone head), loops as the thin smooth tube. SS-class base colors
-  (purple helix / yellow strand / grey loop) are tinted per segment by smoothed
-  Kyte-Doolittle hydropathy (blue hydrophilic → white → orange hydrophobic).
+- **Variable-radius ribbon tube** — a single TubeGeometry with per-ring elliptical
+  cross-sections replaces the old combination of uniform tube + separate helix
+  ribbon boxes + strand arrows. Helices render wide and flat (3.0×1.0 Å),
+  strands wide (2.4×0.9 Å), loops thin (0.9×0.9 Å). This eliminates the sync
+  problem where boxes stayed at source positions while the tube morphed
+  (the "broken" look during animation).
+- **No geometry rebuild at morph end** — `morphTick()` at f=1 snaps the tube
+  to exact target coords/colors in place instead of calling `clearGroup()` +
+  `showStructure()`. The camera orientation is preserved — no more jump to
+  a new orientation when the animation finishes.
+- **Pure hydropathy coloring** — residue colors are mapped directly from
+  smoothed Kyte-Doolittle hydropathy (blue hydrophilic → white → red hydrophobic)
+  with no SS-class tint. The ribbon width/shape still conveys secondary structure.
+- **SS legend** — small legend at bottom-left shows the three ribbon shapes
+  (wide flat bar = helix, medium bar = strand, thin dot = loop).
 - **Consistent medium lighting** — hemisphere (0.55) + directional (0.45) lights
   attached to the camera at fixed medium intensity. Illumination stays fixed
   relative to the viewer while orbiting, and shading never blows out or goes dark.
@@ -37,7 +51,7 @@ Open `viewer.html` in any browser (needs internet for the Three.js CDN).
   GIF renderer): stable residues that keep their SSE class hold their position
   (a helix that is a helix in both species does not reshuffle), changing residues
   travel with smoothstep easing, and insertions grow in from the source centroid.
-  No more whole-protein reshuffle with an abrupt end.
+  The tube cross-section (SS radius) also cross-fades during the morph.
 - **Membrane visualization removed** — the predicted membrane slab planes are gone.
 
 ## Tree

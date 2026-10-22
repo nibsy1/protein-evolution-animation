@@ -5,7 +5,7 @@
   "pipeline_versions": {
     "structure_aligner": "v3 (threaded-seq fix)",
     "morph_animation": "v3 (reference-anchored + N/C labels + thick ribbons)",
-    "interactive_viewer": "v10 (smooth morph + N/C markers)"
+    "interactive_viewer": "v11 (variable-radius tube, no rebuild at morph end, pure hydropathy coloring)"
   },
   "reference": "PWZ53365.1 (Zea mays)",
   "n_structures": 16,
@@ -43,8 +43,8 @@
       "sha256": "2395ce2b38338666"
     },
     "viewer.html": {
-      "bytes": 1882550,
-      "sha256": "44ed200f71e1ddb2"
+      "bytes": 1884170,
+      "sha256": "448bd00ec8c7c67f"
     }
   }
 }

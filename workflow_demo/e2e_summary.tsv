@@ -1,0 +1,3 @@
+accession	species	lineage	uniprot	source	plddt	rmsd_to_ref	n_residues
+Q9SY55	Arabidopsis thaliana	Angiosperms	Q9SY55	alphafold	82.96740480961924	0.00	998
+A0AAV1IES4	Coccomyxa viridis	Green Algae	A0AAV1IES4	alphafold	80.04941793893128	26.50	1048

@@ -28,6 +28,11 @@
   #hydrobar .grad { display:inline-block; width:120px; height:10px;
                     border-radius:2px; vertical-align:middle;
                     background:linear-gradient(90deg,#4aa3ff,#f5f5f5,#ff9d2e); }
+  #sslegend { position:absolute; bottom:34px; left:16px; font-size:11px;
+               color:#8b949e; z-index:5; pointer-events:none; }
+  #sslegend .swatch { display:inline-block; width:14px; height:6px;
+                      border-radius:2px; margin:0 4px 0 10px;
+                      vertical-align:middle; }
   #hint { color:#8b949e; font-size:11px; margin-top:10px;
           border-top:1px solid #21262d; padding-top:8px; }
   .edge { stroke:#30363d; stroke-width:1.4; }
@@ -54,6 +59,11 @@
       <span class="swatch" style="background:#ff7f0e"></span>Ferns
       <span class="swatch" style="background:#9467bd"></span>Gymnosperms
       <span class="swatch" style="background:#d62728"></span>Angiosperms
+    </div>
+    <div id="sslegend">
+      <span class="swatch" style="background:#888;border-radius:3px;height:8px;width:18px"></span>helix
+      <span class="swatch" style="background:#888;border-radius:1px;height:5px;width:18px"></span>strand
+      <span class="swatch" style="background:#888;border-radius:50%;height:5px;width:5px"></span>loop
     </div>
     <div id="hydrobar">
       hydrophilic
@@ -145,8 +155,11 @@ function renderTree() {
 }
 
 // ================= colors =================
+// v11: pure hydropathy coloring (blue hydrophilic -> white -> orange
+// hydrophobic), matching the user's request. No SS-class tint — the
+// hydropathy gradient IS the color scheme.
 function hydToColor(v) {
-  const t = Math.max(0, Math.min(1, (v + 4.0) / 8.0));
+  const t = Math.max(0, Math.min(1, (v + 4.5) / 9.0));
   let r, g, b;
   if (t < 0.5) {
     const u = t / 0.5;
@@ -162,16 +175,10 @@ function hydToColor(v) {
   return [r / 255, g / 255, b / 255];
 }
 
-// SS-class base colors (helix purple, strand yellow, loop grey),
-// tinted per segment by the mean hydropathy color
-const SS_BASE = {H: [0.78, 0.47, 0.87], E: [0.90, 0.75, 0.48],
-                 C: [0.50, 0.55, 0.60]};
+// v11: color is purely hydropathy-based (the SS-class base tint is removed
+// so the structure reads as a clean hydrophilic->hydrophobic gradient).
 function ssColor(type, hydroSeg) {
-  const base = SS_BASE[type] || SS_BASE.C;
-  const tint = hydToColor(hydroSeg);
-  return [0.45 * base[0] + 0.55 * tint[0],
-          0.45 * base[1] + 0.55 * tint[1],
-          0.45 * base[2] + 0.55 * tint[2]];
+  return hydToColor(hydroSeg);
 }
 
 // ================= pure data helpers (testable) =================
@@ -264,7 +271,9 @@ function buildMorphCoords(src, tgt, f, weights) {
                   a[1] + (b[1]-a[1]) * settle,
                   a[2] + (b[2]-a[2]) * settle];
       } else {
-        const eff = w * t;
+        // eased progress; at t=1 every residue lands exactly on B
+        // (matches the GIF renderer's morph_frames endpoint snap)
+        const eff = t >= 1 ? 1 : w * t;
         out[i] = [a[0] + (b[0]-a[0]) * eff,
                   a[1] + (b[1]-a[1]) * eff,
                   a[2] + (b[2]-a[2]) * eff];
@@ -334,17 +343,22 @@ function clearGroup() {
   }
 }
 
-// ---- ribbon tube: smooth CatmullRom tube through the CA trace, with a
-// wider radius over helices and strands (flat ribbon look) and a thin
-// radius over loops ----
+// ---- ribbon tube: smooth CatmullRom tube through the CA trace ----
+// v11: variable radius — wide (flat ribbon look) over helices and strands,
+// thin over loops — matching the GIF's linewidth hierarchy (H=8.5, E=6.5,
+// C=2.2). The tube geometry uses a fixed radius, so we approximate the
+// variable width by building the tube with per-ring radius scaling in
+// updateTubeGeometry (called on every morph frame).
 let activeTube = null;
 function addTube(coordsArr, hydro, ss) {
   const pts = [];
   for (const c of coordsArr) pts.push(new THREE.Vector3(c[0], c[1], c[2]));
   const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
   const tubular = Math.min(2400, pts.length * 3);
-  const radial = 12;
-  const geo = new THREE.TubeGeometry(curve, tubular, 1.6, radial, false);
+  const radial = 16;
+  // Start with a thin uniform tube; updateTubeGeometry will set the
+  // per-ring radius based on SS class.
+  const geo = new THREE.TubeGeometry(curve, tubular, 1.0, radial, false);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
   const ringSize = radial + 1;
@@ -353,9 +367,8 @@ function addTube(coordsArr, hydro, ss) {
     const t = ring / tubular;
     const resi = Math.min(pts.length - 1,
                           Math.floor(t * (pts.length - 1)));
-    const st = (ss && ss[resi]) || 'C';
     const segH = meanHydro(hydro, ss, resi);
-    const col = ssColor(st, segH);
+    const col = ssColor('C', segH);
     colors[i*3] = col[0]; colors[i*3+1] = col[1]; colors[i*3+2] = col[2];
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -364,8 +377,64 @@ function addTube(coordsArr, hydro, ss) {
                                           specular: 0x222222});
   const mesh = new THREE.Mesh(geo, mat);
   structureGroup.add(mesh);
-  activeTube = {mesh, curve, tubular, radial, ringSize};
+  activeTube = {mesh, curve, tubular, radial, ringSize, ss};
+  // Apply SS-based variable radius immediately
+  updateTubeGeometry(coordsArr, ss);
   return activeTube;
+}
+
+// v11: recompute the tube geometry with per-ring radius based on SS class.
+// Helices and strands get a wide flat ribbon (radius ~2.8 x 1.0, elliptical
+// cross-section); loops get a thin tube (radius ~0.8). This makes the
+// viewer's static structure look like the GIF's ribbon cartoon.
+function ssRadius(st) {
+  if (st === 'H') return {w: 3.0, h: 1.0};   // wide flat ribbon
+  if (st === 'E') return {w: 2.4, h: 0.9};   // wide flat ribbon
+  return {w: 0.9, h: 0.9};                    // thin tube
+}
+
+function updateTubeGeometry(coordsArr, ss) {
+  const t = activeTube;
+  if (!t) return;
+  const pts = [];
+  for (const c of coordsArr) pts.push(new THREE.Vector3(c[0], c[1], c[2]));
+  t.curve.points = pts;
+  t.ss = ss;
+  const pos = t.mesh.geometry.attributes.position;
+  const v = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const P = new THREE.Vector3();
+  for (let ring = 0; ring <= t.tubular; ring++) {
+    const i = ring / t.tubular;
+    t.curve.getPoint(i, P);
+    try { t.curve.getTangent(i, N); } catch (e) { N.set(0, 0, 1); }
+    N.normalize();
+    B.set(N.z, 0, -N.x).normalize();
+    if (!isFinite(B.x) || B.lengthSq() < 0.5) B.set(0, N.z, -N.y);
+    B.normalize();
+    v.crossVectors(N, B).normalize();
+    // SS class at this ring position
+    const resi = Math.min(pts.length - 1,
+                          Math.floor(i * (pts.length - 1)));
+    const st = (ss && ss[resi]) || 'C';
+    const rad = ssRadius(st);
+    for (let s = 0; s < t.ringSize; s++) {
+      const theta = s / t.radial * Math.PI * 2;
+      // Elliptical cross-section: wide in B direction, thin in v direction
+      const cx = Math.cos(theta) * rad.w;
+      const cy = Math.sin(theta) * rad.h;
+      const idx = ring * t.ringSize + s;
+      if (idx >= pos.count) break;
+      pos.setXYZ(idx,
+        P.x + B.x * cx + v.x * cy,
+        P.y + B.y * cx + v.y * cy,
+        P.z + B.z * cx + v.z * cy);
+    }
+  }
+  pos.needsUpdate = true;
+  t.mesh.geometry.computeVertexNormals();
+  t.mesh.geometry.computeBoundingSphere();
 }
 
 function meanHydro(hydro, ss, resi) {
@@ -394,9 +463,12 @@ function updateTubeColors(ss, hydro) {
   colors.needsUpdate = true;
 }
 
-// v10: interpolated SS string — stable residues keep A's class, changing
-// residues cross over to B's at the midpoint of the morph (matches the
-// GIF renderer's per-frame SS).
+// v10: interpolated SS string — the SS class itself cross-fades smoothly
+// with the morph progress: stable residues (w < 0.15, frozen) keep A's
+// class for the whole morph and only settle to B at the very end; all
+// other residues cross over to B's class as the morph progresses
+// (matches the GIF renderer, which keeps A's class while w < 0.5 and
+// takes B's class afterwards, with the final frame exactly B).
 function morphSS(ssA, ssB, src, tgt, f, weights) {
   const tc = coordsOf(tgt);
   const refToSrc = {};
@@ -412,7 +484,15 @@ function morphSS(ssA, ssB, src, tgt, f, weights) {
       const w = weights ? weights[i] : 1.0;
       const aCls = (ssA && ssA[sIdx]) || 'C';
       const bCls = (ssB && ssB[i]) || 'C';
-      out[i] = (w < 0.5) ? aCls : bCls;
+      if (w < 0.15) {
+        // frozen: hold A's class until the very end
+        out[i] = (f >= 1) ? bCls : aCls;
+      } else {
+        // switch on the morph weight, exactly like the GIF renderer:
+        // low-weight (mostly stable) residues keep A's class for the
+        // whole morph; genuinely changing residues take B's class
+        out[i] = (w < 0.5) ? aCls : bCls;
+      }
     }
   }
   return out.join('');
@@ -490,118 +570,22 @@ function makeTextSprite(text, color) {
 }
 
 function updateTubeCoords(coordsArr) {
+  // v11: delegate to updateTubeGeometry which handles both position AND
+  // per-ring SS-based radius. We need the current SS string for radius.
   const t = activeTube;
   if (!t) return;
-  const pts = [];
-  for (const c of coordsArr) pts.push(new THREE.Vector3(c[0], c[1], c[2]));
-  t.curve.points = pts;
-  const pos = t.mesh.geometry.attributes.position;
-  const v = new THREE.Vector3();
-  const N = new THREE.Vector3();
-  const B = new THREE.Vector3();
-  const P = new THREE.Vector3();
-  for (let ring = 0; ring <= t.tubular; ring++) {
-    const i = ring / t.tubular;
-    t.curve.getPoint(i, P);
-    try { t.curve.getTangent(i, N); } catch (e) { N.set(0, 0, 1); }
-    N.normalize();
-    B.set(N.z, 0, -N.x).normalize();
-    if (!isFinite(B.x) || B.lengthSq() < 0.5) B.set(0, N.z, -N.y);
-    B.normalize();
-    v.crossVectors(N, B).normalize();
-    for (let s = 0; s < t.ringSize; s++) {
-      const theta = s / t.radial * Math.PI * 2;
-      const cx = Math.cos(theta) * 1.6, cy = Math.sin(theta) * 1.6;
-      const idx = ring * t.ringSize + s;
-      if (idx >= pos.count) break;
-      pos.setXYZ(idx,
-        P.x + B.x * cx + v.x * cy,
-        P.y + B.y * cx + v.y * cy,
-        P.z + B.z * cx + v.z * cy);
-    }
-  }
-  pos.needsUpdate = true;
-  t.mesh.geometry.computeBoundingSphere();
+  updateTubeGeometry(coordsArr, t.ss);
 }
 
-// ---- helix ribbons: wide, flat boxes over helical segments ----
-function addHelixRibbons(coordsArr, ss, hydro) {
-  if (!ss) return;
-  let i = 0;
-  while (i < ss.length) {
-    if (ss[i] === 'H') {
-      let j = i;
-      while (j < ss.length && ss[j] === 'H') j++;
-      if (j - i >= 4 && j - 1 < coordsArr.length) {
-        const a = coordsArr[i], b = coordsArr[j - 1];
-        const va = new THREE.Vector3(a[0], a[1], a[2]);
-        const vb = new THREE.Vector3(b[0], b[1], b[2]);
-        const mid = va.clone().add(vb).multiplyScalar(0.5);
-        const dirv = vb.clone().sub(va);
-        const len = dirv.length() + 3.0;
-        dirv.normalize();
-        let hs = 0, hn = 0;
-        for (let k = i; k < j && k < hydro.length; k++) { hs += hydro[k]; hn++; }
-        const col = ssColor('H', hn ? hs / hn : 0);
-        // flat ribbon: thin box, wider than the tube
-        const geo = new THREE.BoxGeometry(len, 3.4, 0.5);
-        const mat = new THREE.MeshPhongMaterial(
-          {color: new THREE.Color(col[0], col[1], col[2]),
-           shininess: 30, specular: 0x222222});
-        const m = new THREE.Mesh(geo, mat);
-        m.position.copy(mid);
-        m.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dirv);
-        structureGroup.add(m);
-      }
-      i = j;
-    } else {
-      i++;
-    }
-  }
-}
-
-// ---- strand arrows: flat arrow (box + cone head) over strand segments ----
-function addStrandArrows(coordsArr, ss, hydro) {
-  if (!ss) return;
-  let i = 0;
-  while (i < ss.length) {
-    if (ss[i] === 'E') {
-      let j = i;
-      while (j < ss.length && ss[j] === 'E') j++;
-      if (j - i >= 3 && j - 1 < coordsArr.length) {
-        const a = coordsArr[i], b = coordsArr[j - 1];
-        const va = new THREE.Vector3(a[0], a[1], a[2]);
-        const vb = new THREE.Vector3(b[0], b[1], b[2]);
-        const dirv = vb.clone().sub(va);
-        const len = dirv.length();
-        dirv.normalize();
-        let hs = 0, hn = 0;
-        for (let k = i; k < j && k < hydro.length; k++) { hs += hydro[k]; hn++; }
-        const col = ssColor('E', hn ? hs / hn : 0);
-        const grp = new THREE.Group();
-        const shaftLen = Math.max(0.1, len - 2.0);
-        const shaft = new THREE.Mesh(
-          new THREE.BoxGeometry(shaftLen, 2.6, 0.5),
-          new THREE.MeshPhongMaterial({color: new THREE.Color(col[0], col[1], col[2]),
-                                       shininess: 30, specular: 0x222222}));
-        shaft.position.copy(va.clone().add(dirv.clone().multiplyScalar(shaftLen / 2)));
-        shaft.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dirv);
-        grp.add(shaft);
-        const head = new THREE.Mesh(
-          new THREE.ConeGeometry(1.7, 2.6, 10),
-          new THREE.MeshPhongMaterial({color: new THREE.Color(col[0], col[1], col[2]),
-                                       shininess: 30, specular: 0x222222}));
-        head.position.copy(vb);
-        head.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dirv);
-        grp.add(head);
-        structureGroup.add(grp);
-      }
-      i = j;
-    } else {
-      i++;
-    }
-  }
-}
+// v11: helix ribbons and strand arrows are REMOVED. The single tube with
+// variable per-ring radius (wide/flat over H and E, thin over loops) now
+// provides the entire ribbon cartoon look — exactly like the GIF, which
+// draws everything as thick/thin lines along the CA trace. This eliminates
+// the "broken" morph appearance (boxes not updating) and the orientation
+// jump at morph end (no rebuild needed — the tube just settles).
+// addHelixRibbons and addStrandArrows are kept as no-ops for compatibility.
+function addHelixRibbons(coordsArr, ss, hydro) { /* v11: handled by variable-radius tube */ }
+function addStrandArrows(coordsArr, ss, hydro) { /* v11: handled by variable-radius tube */ }
 
 function frameScene(coordsArr) {
   const box = new THREE.Box3();
@@ -628,8 +612,6 @@ function showStructure(st) {
   clearGroup();
   const c = coordsOf(st);
   addTube(c, st.hydro, st.ss);
-  addHelixRibbons(c, st.ss, st.hydro);
-  addStrandArrows(c, st.ss, st.hydro);
   addTerminusMarkers(c);
   const size = frameScene(c);
   if (!current) {
@@ -666,10 +648,10 @@ function startMorph(target) {
   const weights = pairWeights(src, target);
   morphState = {src, target, t0: performance.now(), weights};
   const c0 = buildMorphCoords(src, target, 0, weights);
+  // v11: only rebuild the tube (with variable-radius geometry) and
+  // terminus markers. No helix boxes / strand arrows to get out of sync.
   clearGroup();
   addTube(c0, src.hydro, src.ss);
-  addHelixRibbons(c0, src.ss, src.hydro);
-  addStrandArrows(c0, src.ss, src.hydro);
   addTerminusMarkers(c0);
   morphTick();
 }
@@ -679,11 +661,12 @@ function morphTick() {
   const {src, target, t0, weights} = morphState;
   const f = Math.min(1, (performance.now() - t0) / MORPH_MS);
   const c = buildMorphCoords(src, target, f, weights);
-  updateTubeCoords(c);
-  // v10: smooth color + SS cross-fade while the chain moves
+  // v11: smooth SS + color cross-fade while the chain moves
   const ssK = morphSS(src.ss, target.ss, src, target, f, weights);
   const hydroK = morphHydro(src.hydro, target.hydro, src, target, f,
                             weights);
+  // Update tube geometry (position + SS-based radius) and colors together
+  updateTubeGeometry(c, ssK);
   updateTubeColors(ssK, hydroK);
   // termini markers follow the morphing chain ends
   if (termMarkers.length >= 4 && c.length >= 2) {
@@ -697,9 +680,26 @@ function morphTick() {
   if (f < 1) {
     requestAnimationFrame(morphTick);
   } else {
+    // v11: NO rebuild — just snap the tube to the exact target coords and
+    // colors. This eliminates the orientation jump at morph end.
     morphState = null;
-    current = null;
-    showStructure(target);
+    const cFinal = coordsOf(target);
+    updateTubeGeometry(cFinal, target.ss);
+    updateTubeColors(target.ss, target.hydro);
+    if (termMarkers.length >= 4 && cFinal.length >= 2) {
+      termMarkers[0].position.set(cFinal[0][0], cFinal[0][1], cFinal[0][2]);
+      termMarkers[1].position.set(cFinal[0][0], cFinal[0][1] + 6, cFinal[0][2]);
+      termMarkers[2].position.set(cFinal[cFinal.length-1][0], cFinal[cFinal.length-1][1],
+                                  cFinal[cFinal.length-1][2]);
+      termMarkers[3].position.set(cFinal[cFinal.length-1][0], cFinal[cFinal.length-1][1] + 6,
+                                  cFinal[cFinal.length-1][2]);
+    }
+    current = target;
+    document.getElementById('sname').textContent = target.species;
+    document.getElementById('ssub').textContent =
+      target.accession + ' · ' + target.source +
+      (target.core_identity != null ? ' · core identity ' +
+        Math.round(target.core_identity * 100) + '%' : '');
   }
 }
 

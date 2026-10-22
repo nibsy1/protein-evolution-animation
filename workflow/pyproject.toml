@@ -1,0 +1,16 @@
+[project]
+name = "protein-animation-workflow"
+version = "1.0.0"
+description = "Mistral Workflow: gene name / AGI / protein name -> evolutionary protein animation (sequences, aligned PDBs, morph GIF, interactive viewer)"
+requires-python = ">=3.12"
+dependencies = [
+    "mistralai-workflows[mistralai]>=0.1.0",
+    "mistralai>=2.8.0",
+    "pydantic>=2.0",
+    "requests>=2.28",
+    "numpy>=1.24",
+    "biopython>=1.81",
+    "matplotlib>=3.7",
+    "pillow>=10.0",
+    "python-dotenv>=1.0",
+]

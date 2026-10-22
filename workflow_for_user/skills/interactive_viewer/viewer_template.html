@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Protein Evolution Viewer</title>
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#0d1117;
+              color:#e6edf3; font-family:system-ui, sans-serif;
+              overflow:hidden; }
+  #app { display:flex; height:100%; }
+  #left { width:33%; min-width:300px; padding:14px; overflow:auto;
+          border-right:1px solid #21262d; }
+  #right { flex:1; position:relative; }
+  #paneltitle { font-size:15px; font-weight:700; margin-bottom:6px;
+                color:#e6edf3; }
+  #sname { font-size:17px; font-weight:600; color:#e6edf3; }
+  #ssub { color:#8b949e; font-size:12px; margin-top:2px; }
+  #titlebar { position:absolute; top:10px; left:16px; z-index:5;
+              pointer-events:none; }
+  #legend { position:absolute; bottom:12px; left:16px; font-size:11px;
+            color:#8b949e; z-index:5; pointer-events:none; }
+  #legend .swatch { display:inline-block; width:10px; height:10px;
+                    border-radius:2px; margin:0 4px 0 10px; }
+  #hydrobar { position:absolute; bottom:12px; right:16px; font-size:11px;
+              color:#8b949e; z-index:5; pointer-events:none; }
+  #hydrobar .grad { display:inline-block; width:120px; height:10px;
+                    border-radius:2px; vertical-align:middle;
+                    background:linear-gradient(90deg,#4aa3ff,#f5f5f5,#ff9d2e); }
+  #hint { color:#8b949e; font-size:11px; margin-top:10px;
+          border-top:1px solid #21262d; padding-top:8px; }
+  .edge { stroke:#30363d; stroke-width:1.4; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="left">
+    <div id="paneltitle">__TITLE__</div>
+    <div id="tree"></div>
+    <div id="hint">Click a species to morph the structure.
+      Drag in the 3D window to rotate, scroll to zoom,
+      right-drag to pan.</div>
+  </div>
+  <div id="right">
+    <div id="titlebar">
+      <div id="sname"></div>
+      <div id="ssub"></div>
+    </div>
+    <div id="stage" style="width:100%;height:100%"></div>
+    <div id="legend">
+      <span class="swatch" style="background:#2ca02c"></span>Green algae
+      <span class="swatch" style="background:#8c564b"></span>Bryophytes
+      <span class="swatch" style="background:#ff7f0e"></span>Ferns
+      <span class="swatch" style="background:#9467bd"></span>Gymnosperms
+      <span class="swatch" style="background:#d62728"></span>Angiosperms
+    </div>
+    <div id="hydrobar">
+      hydrophilic
+      <span class="grad"></span>
+      hydrophobic
+    </div>
+  </div>
+</div>
+<script>
+const DATA = __DATA__;
+
+// ================= phylogenetic tree (SVG) =================
+const treeBox = document.getElementById('tree');
+const NS = 'http://www.w3.org/2000/svg';
+const leafIdx = {};
+
+function renderTree() {
+  const w = treeBox.clientWidth || 400;
+  const rowH = 30, padL = 6, padT = 10, labelW = 185;
+  const n = DATA.tree.leaves.length;
+  const height = n * rowH + padT * 2;
+  const maxDepth = Math.max(...DATA.tree.nodes.map(nd => nd.x), 1);
+  const colW = Math.max(6, (w - padL - labelW) / maxDepth);
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', height);
+  const pos = {};
+  DATA.tree.nodes.forEach(nd => {
+    pos[nd.label + '|' + nd.x] = {x: padL + nd.x * colW,
+                                  y: padT + nd.y * rowH};
+  });
+  DATA.tree.edges.forEach(e => {
+    const [d0, y0, d1, y1] = e;
+    const x0 = padL + d0 * colW, x1 = padL + d1 * colW;
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', `M${x0} ${padT + y0*rowH} ` +
+      `L${x0} ${padT + y1*rowH} L${x1} ${padT + y1*rowH}`);
+    path.setAttribute('class', 'edge');
+    path.setAttribute('fill', 'none');
+    svg.appendChild(path);
+  });
+  DATA.tree.leaves.forEach((sp, i) => {
+    const st = DATA.structures.find(s => s.species === sp);
+    const col = DATA.lineageColors[st ? (st.lineage||'') : ''] || '#30363d';
+    const x = padL + maxDepth * colW;
+    const y = padT + i * rowH;
+    const g = document.createElementNS(NS, 'g');
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', x); c.setAttribute('cy', y);
+    c.setAttribute('r', 5); c.setAttribute('fill', col);
+    c.setAttribute('stroke', '#0d1117');
+    c.style.cursor = 'pointer';
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', x + 10); t.setAttribute('y', y + 4);
+    t.setAttribute('fill', '#e6edf3');
+    t.setAttribute('font-size', '12');
+    t.style.cursor = 'pointer';
+    t.textContent = sp;
+    const hit = document.createElementNS(NS, 'rect');
+    hit.setAttribute('x', x - 6); hit.setAttribute('y', y - 9);
+    hit.setAttribute('width', labelW); hit.setAttribute('height', 18);
+    hit.setAttribute('fill', 'transparent');
+    hit.style.cursor = 'pointer';
+    g.appendChild(hit); g.appendChild(c); g.appendChild(t);
+    g.addEventListener('click', () => selectSpecies(sp));
+    svg.appendChild(g);
+    leafIdx[sp] = {t};
+  });
+  const outDeg = {};
+  DATA.tree.edges.forEach(e => {
+    const k = e[0] + '|' + e[1];
+    outDeg[k] = (outDeg[k] || 0) + 1;
+  });
+  DATA.tree.nodes.forEach(nd => {
+    if (nd.leaf) return;
+    const xy = pos[nd.label + '|' + nd.x];
+    if (!xy) return;
+    const deg = outDeg[nd.x + '|' + nd.y] || 0;
+    if (deg < 2) return;
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', xy.x + 3); t.setAttribute('y', xy.y - 6);
+    t.setAttribute('fill', '#58a6ff');
+    t.setAttribute('font-size', '10');
+    t.setAttribute('font-style', 'italic');
+    t.textContent = nd.label;
+    svg.appendChild(t);
+  });
+  treeBox.appendChild(svg);
+}
+
+// ================= colors =================
+function hydToColor(v) {
+  const t = Math.max(0, Math.min(1, (v + 4.0) / 8.0));
+  let r, g, b;
+  if (t < 0.5) {
+    const u = t / 0.5;
+    r = 74 + (245 - 74) * u;
+    g = 163 + (245 - 163) * u;
+    b = 255 + (245 - 255) * u;
+  } else {
+    const u = (t - 0.5) / 0.5;
+    r = 245 + (255 - 245) * u;
+    g = 245 + (157 - 245) * u;
+    b = 245 + (46 - 245) * u;
+  }
+  return [r / 255, g / 255, b / 255];
+}
+
+// SS-class base colors (helix purple, strand yellow, loop grey),
+// tinted per segment by the mean hydropathy color
+const SS_BASE = {H: [0.78, 0.47, 0.87], E: [0.90, 0.75, 0.48],
+                 C: [0.50, 0.55, 0.60]};
+function ssColor(type, hydroSeg) {
+  const base = SS_BASE[type] || SS_BASE.C;
+  const tint = hydToColor(hydroSeg);
+  return [0.45 * base[0] + 0.55 * tint[0],
+          0.45 * base[1] + 0.55 * tint[1],
+          0.45 * base[2] + 0.55 * tint[2]];
+}
+
+// ================= pure data helpers (testable) =================
+function coordArrayOf(st) {
+  const out = [];
+  for (const ln of st.pdb.split('\n')) {
+    if (ln.startsWith('ATOM')) {
+      out.push([parseFloat(ln.substr(30, 8)),
+                parseFloat(ln.substr(38, 8)),
+                parseFloat(ln.substr(46, 8))]);
+    }
+  }
+  return out;
+}
+
+const COORDS = {};
+function coordsOf(st) {
+  if (!COORDS[st.species]) COORDS[st.species] = coordArrayOf(st);
+  return COORDS[st.species];
+}
+
+const TGT_REF_OF = {};
+function tgtRefMap(tgt) {
+  if (!TGT_REF_OF[tgt.species]) {
+    const m = new Array(coordsOf(tgt).length).fill(null);
+    for (const [t, r] of tgt.ref_pairs) {
+      if (t < m.length) m[t] = r;
+    }
+    TGT_REF_OF[tgt.species] = m;
+  }
+  return TGT_REF_OF[tgt.species];
+}
+
+// per-pair morph weights: 0 = frozen (stable + same SS class),
+// 1 = fully animated. Uses CA displacement in the common frame plus
+// SS-class change between source and target.
+function pairWeights(src, tgt) {
+  const sc = coordsOf(src), tc = coordsOf(tgt);
+  const ssS = src.ss || '', ssT = tgt.ss || '';
+  const refToSrc = {};
+  src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
+  const tgtToRef = tgtRefMap(tgt);
+  const DISP_MAX = 4.0, DISP_MIN = 1.0;
+  const w = new Array(tc.length).fill(1.0);
+  for (let i = 0; i < tc.length; i++) {
+    const r = tgtToRef[i];
+    const sIdx = r !== null ? refToSrc[r] : undefined;
+    if (sIdx === undefined || sIdx === null || !sc[sIdx]) {
+      w[i] = 1.0;              // insertion: fully animated
+      continue;
+    }
+    const a = sc[sIdx], b = tc[i];
+    const d = Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
+    const ssChanged = (ssS[sIdx] || 'C') !== (ssT[i] || 'C');
+    const wDisp = Math.max(0, Math.min(1, (d - DISP_MIN) / (DISP_MAX - DISP_MIN)));
+    let ww = Math.max(wDisp, ssChanged ? 1.0 : 0.0);
+    ww = ww * ww * (3 - 2 * ww);   // smoothstep
+    w[i] = ww;
+  }
+  return w;
+}
+
+function smoothstep(t) { t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); }
+
+// masked morph frame: stable residues hold the source position until the
+// very end; changing residues travel source->target with eased, weight-
+// scaled progress; insertions grow in from the source centroid.
+function buildMorphCoords(src, tgt, f, weights) {
+  const sc = coordsOf(src);
+  const tc = coordsOf(tgt);
+  const refToSrc = {};
+  src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
+  const tgtToRef = tgtRefMap(tgt);
+  const cx = sc.reduce((acc, p) => acc + p[0], 0) / sc.length;
+  const cy = sc.reduce((acc, p) => acc + p[1], 0) / sc.length;
+  const cz = sc.reduce((acc, p) => acc + p[2], 0) / sc.length;
+  const t = smoothstep(f);
+  const out = new Array(tc.length);
+  for (let i = 0; i < tc.length; i++) {
+    const b = tc[i];
+    const r = tgtToRef[i];
+    const sIdx = r !== null ? refToSrc[r] : undefined;
+    if (sIdx !== undefined && sIdx !== null && sc[sIdx]) {
+      const a = sc[sIdx];
+      const w = weights[i];
+      if (w < 0.15) {
+        // frozen: hold source position until the very end
+        const settle = t >= 1 ? 1 : 0;
+        out[i] = [a[0] + (b[0]-a[0]) * settle,
+                  a[1] + (b[1]-a[1]) * settle,
+                  a[2] + (b[2]-a[2]) * settle];
+      } else {
+        // eased progress; at t=1 every residue lands exactly on B
+        // (matches the GIF renderer's morph_frames endpoint snap)
+        const eff = t >= 1 ? 1 : w * t;
+        out[i] = [a[0] + (b[0]-a[0]) * eff,
+                  a[1] + (b[1]-a[1]) * eff,
+                  a[2] + (b[2]-a[2]) * eff];
+      }
+    } else {
+      // insertion: grow in from the source centroid
+      out[i] = [cx + (b[0]-cx) * t,
+                cy + (b[1]-cy) * t,
+                cz + (b[2]-cz) * t];
+    }
+  }
+  return out;
+}
+
+// ================= three.js scene =================
+let scene, camera, renderer, controls, structureGroup;
+const stage = document.getElementById('stage');
+
+function init3D() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d1117);
+  camera = new THREE.PerspectiveCamera(50, 1, 1, 5000);
+  camera.position.set(0, 0, 260);
+  renderer = new THREE.WebGLRenderer({antialias: true});
+  renderer.setPixelRatio(window.devicePixelRatio);
+  stage.appendChild(renderer.domElement);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  // consistent MEDIUM lighting: hemisphere + directional at fixed medium
+  // intensity, attached to the camera so illumination stays fixed relative
+  // to the viewer while orbiting
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.55);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.45);
+  dir.position.set(150, 200, 180);
+  camera.add(hemi);
+  camera.add(dir);
+  scene.add(camera);
+  structureGroup = new THREE.Group();
+  scene.add(structureGroup);
+  resize();
+  window.addEventListener('resize', resize);
+  animateLoop();
+}
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (w === 0 || h === 0) return;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+
+function animateLoop() {
+  requestAnimationFrame(animateLoop);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function clearGroup() {
+  clearTerminusMarkers();
+  while (structureGroup.children.length) {
+    const ch = structureGroup.children.pop();
+    ch.traverse(o => { if (o.geometry) o.geometry.dispose();
+                       if (o.material) o.material.dispose();
+                       if (o.material && o.material.map) o.material.map.dispose(); });
+  }
+}
+
+// ---- ribbon tube: smooth CatmullRom tube through the CA trace, with a
+// wider radius over helices and strands (flat ribbon look) and a thin
+// radius over loops ----
+let activeTube = null;
+function addTube(coordsArr, hydro, ss) {
+  const pts = [];
+  for (const c of coordsArr) pts.push(new THREE.Vector3(c[0], c[1], c[2]));
+  const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
+  const tubular = Math.min(2400, pts.length * 3);
+  const radial = 12;
+  const geo = new THREE.TubeGeometry(curve, tubular, 1.6, radial, false);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  const ringSize = radial + 1;
+  for (let i = 0; i < pos.count; i++) {
+    const ring = Math.floor(i / ringSize);
+    const t = ring / tubular;
+    const resi = Math.min(pts.length - 1,
+                          Math.floor(t * (pts.length - 1)));
+    const st = (ss && ss[resi]) || 'C';
+    const segH = meanHydro(hydro, ss, resi);
+    const col = ssColor(st, segH);
+    colors[i*3] = col[0]; colors[i*3+1] = col[1]; colors[i*3+2] = col[2];
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const mat = new THREE.MeshPhongMaterial({vertexColors: true,
+                                          shininess: 30,
+                                          specular: 0x222222});
+  const mesh = new THREE.Mesh(geo, mat);
+  structureGroup.add(mesh);
+  activeTube = {mesh, curve, tubular, radial, ringSize};
+  return activeTube;
+}
+
+function meanHydro(hydro, ss, resi) {
+  if (!hydro || !hydro.length) return 0;
+  return hydro[resi] !== undefined ? hydro[resi] : 0;
+}
+
+// v10: update the tube's VERTEX COLORS in place (smooth color cross-fade
+// during a morph, instead of rebuilding the tube with target colors).
+function updateTubeColors(ss, hydro) {
+  const t = activeTube;
+  if (!t || !ss) return;
+  const pos = t.mesh.geometry.attributes.position;
+  const colors = t.mesh.geometry.attributes.color;
+  const ringSize = t.radial + 1;
+  for (let i = 0; i < pos.count; i++) {
+    const ring = Math.floor(i / ringSize);
+    const tt = ring / t.tubular;
+    const resi = Math.min(t.curve.points.length - 1,
+                          Math.floor(tt * (t.curve.points.length - 1)));
+    const st = ss[resi] || 'C';
+    const segH = meanHydro(hydro, ss, resi);
+    const col = ssColor(st, segH);
+    colors.setXYZ(i, col[0], col[1], col[2]);
+  }
+  colors.needsUpdate = true;
+}
+
+// v10: interpolated SS string — the SS class itself cross-fades smoothly
+// with the morph progress: stable residues (w < 0.15, frozen) keep A's
+// class for the whole morph and only settle to B at the very end; all
+// other residues cross over to B's class as the morph progresses
+// (matches the GIF renderer, which keeps A's class while w < 0.5 and
+// takes B's class afterwards, with the final frame exactly B).
+function morphSS(ssA, ssB, src, tgt, f, weights) {
+  const tc = coordsOf(tgt);
+  const refToSrc = {};
+  src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
+  const tgtToRef = tgtRefMap(tgt);
+  const out = new Array(tc.length);
+  for (let i = 0; i < tc.length; i++) {
+    const r = tgtToRef[i];
+    const sIdx = r !== null ? refToSrc[r] : undefined;
+    if (sIdx === undefined || sIdx === null) {
+      out[i] = (ssB && ssB[i]) || 'C';   // insertion takes target class
+    } else {
+      const w = weights ? weights[i] : 1.0;
+      const aCls = (ssA && ssA[sIdx]) || 'C';
+      const bCls = (ssB && ssB[i]) || 'C';
+      if (w < 0.15) {
+        // frozen: hold A's class until the very end
+        out[i] = (f >= 1) ? bCls : aCls;
+      } else {
+        // switch on the morph weight, exactly like the GIF renderer:
+        // low-weight (mostly stable) residues keep A's class for the
+        // whole morph; genuinely changing residues take B's class
+        out[i] = (w < 0.5) ? aCls : bCls;
+      }
+    }
+  }
+  return out.join('');
+}
+
+// v10: interpolated hydropathy — smooth color cross-fade between the two
+// structures' per-residue hydropathy (the GIF cross-fades pLDDT colors the
+// same way; the viewer tints SS base colors by hydropathy).
+function morphHydro(hydroA, hydroB, src, tgt, f, weights) {
+  const tc = coordsOf(tgt);
+  const refToSrc = {};
+  src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
+  const tgtToRef = tgtRefMap(tgt);
+  const out = new Array(tc.length).fill(0);
+  for (let i = 0; i < tc.length; i++) {
+    const r = tgtToRef[i];
+    const sIdx = r !== null ? refToSrc[r] : undefined;
+    const aV = (sIdx !== undefined && sIdx !== null && hydroA)
+      ? (hydroA[sIdx] || 0) : 0;
+    const bV = (hydroB && hydroB[i] !== undefined) ? hydroB[i] : 0;
+    out[i] = aV * (1 - f) + bV * f;
+  }
+  return out;
+}
+
+// ---- N-/C-terminus markers: small spheres + floating text labels ----
+const TERM_COLORS = {N: 0x58a6ff, C: 0xff7f0e};
+let termMarkers = [];
+function addTerminusMarkers(coordsArr) {
+  clearTerminusMarkers();
+  if (!coordsArr || coordsArr.length < 2) return;
+  [[0, 'N'], [coordsArr.length - 1, 'C']].forEach(([idx, label]) => {
+    const p = coordsArr[idx];
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(2.4, 16, 12),
+      new THREE.MeshPhongMaterial({color: TERM_COLORS[label],
+                                   emissive: TERM_COLORS[label],
+                                   emissiveIntensity: 0.35,
+                                   shininess: 40}));
+    sphere.position.set(p[0], p[1], p[2]);
+    structureGroup.add(sphere);
+    const spr = makeTextSprite(label, label === 'N' ? '#58a6ff' : '#ff7f0e');
+    spr.position.set(p[0], p[1], p[2]);
+    structureGroup.add(spr);
+    termMarkers.push(sphere, spr);
+  });
+}
+
+function clearTerminusMarkers() {
+  for (const m of termMarkers) {
+    structureGroup.remove(m);
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) m.material.dispose();
+    if (m.material && m.material.map) m.material.map.dispose();
+  }
+  termMarkers = [];
+}
+
+function makeTextSprite(text, color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 40px system-ui, sans-serif';
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 32, 34);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({map: tex, depthTest: false,
+                                        transparent: true});
+  const spr = new THREE.Sprite(mat);
+  spr.scale.set(9, 9, 1);
+  spr.position.y += 6;
+  return spr;
+}
+
+function updateTubeCoords(coordsArr) {
+  const t = activeTube;
+  if (!t) return;
+  const pts = [];
+  for (const c of coordsArr) pts.push(new THREE.Vector3(c[0], c[1], c[2]));
+  t.curve.points = pts;
+  const pos = t.mesh.geometry.attributes.position;
+  const v = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const P = new THREE.Vector3();
+  for (let ring = 0; ring <= t.tubular; ring++) {
+    const i = ring / t.tubular;
+    t.curve.getPoint(i, P);
+    try { t.curve.getTangent(i, N); } catch (e) { N.set(0, 0, 1); }
+    N.normalize();
+    B.set(N.z, 0, -N.x).normalize();
+    if (!isFinite(B.x) || B.lengthSq() < 0.5) B.set(0, N.z, -N.y);
+    B.normalize();
+    v.crossVectors(N, B).normalize();
+    for (let s = 0; s < t.ringSize; s++) {
+      const theta = s / t.radial * Math.PI * 2;
+      const cx = Math.cos(theta) * 1.6, cy = Math.sin(theta) * 1.6;
+      const idx = ring * t.ringSize + s;
+      if (idx >= pos.count) break;
+      pos.setXYZ(idx,
+        P.x + B.x * cx + v.x * cy,
+        P.y + B.y * cx + v.y * cy,
+        P.z + B.z * cx + v.z * cy);
+    }
+  }
+  pos.needsUpdate = true;
+  t.mesh.geometry.computeBoundingSphere();
+}
+
+// ---- helix ribbons: wide, flat boxes over helical segments ----
+function addHelixRibbons(coordsArr, ss, hydro) {
+  if (!ss) return;
+  let i = 0;
+  while (i < ss.length) {
+    if (ss[i] === 'H') {
+      let j = i;
+      while (j < ss.length && ss[j] === 'H') j++;
+      if (j - i >= 4 && j - 1 < coordsArr.length) {
+        const a = coordsArr[i], b = coordsArr[j - 1];
+        const va = new THREE.Vector3(a[0], a[1], a[2]);
+        const vb = new THREE.Vector3(b[0], b[1], b[2]);
+        const mid = va.clone().add(vb).multiplyScalar(0.5);
+        const dirv = vb.clone().sub(va);
+        const len = dirv.length() + 3.0;
+        dirv.normalize();
+        let hs = 0, hn = 0;
+        for (let k = i; k < j && k < hydro.length; k++) { hs += hydro[k]; hn++; }
+        const col = ssColor('H', hn ? hs / hn : 0);
+        // flat ribbon: thin box, wider than the tube
+        const geo = new THREE.BoxGeometry(len, 3.4, 0.5);
+        const mat = new THREE.MeshPhongMaterial(
+          {color: new THREE.Color(col[0], col[1], col[2]),
+           shininess: 30, specular: 0x222222});
+        const m = new THREE.Mesh(geo, mat);
+        m.position.copy(mid);
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dirv);
+        structureGroup.add(m);
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+}
+
+// ---- strand arrows: flat arrow (box + cone head) over strand segments ----
+function addStrandArrows(coordsArr, ss, hydro) {
+  if (!ss) return;
+  let i = 0;
+  while (i < ss.length) {
+    if (ss[i] === 'E') {
+      let j = i;
+      while (j < ss.length && ss[j] === 'E') j++;
+      if (j - i >= 3 && j - 1 < coordsArr.length) {
+        const a = coordsArr[i], b = coordsArr[j - 1];
+        const va = new THREE.Vector3(a[0], a[1], a[2]);
+        const vb = new THREE.Vector3(b[0], b[1], b[2]);
+        const dirv = vb.clone().sub(va);
+        const len = dirv.length();
+        dirv.normalize();
+        let hs = 0, hn = 0;
+        for (let k = i; k < j && k < hydro.length; k++) { hs += hydro[k]; hn++; }
+        const col = ssColor('E', hn ? hs / hn : 0);
+        const grp = new THREE.Group();
+        const shaftLen = Math.max(0.1, len - 2.0);
+        const shaft = new THREE.Mesh(
+          new THREE.BoxGeometry(shaftLen, 2.6, 0.5),
+          new THREE.MeshPhongMaterial({color: new THREE.Color(col[0], col[1], col[2]),
+                                       shininess: 30, specular: 0x222222}));
+        shaft.position.copy(va.clone().add(dirv.clone().multiplyScalar(shaftLen / 2)));
+        shaft.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dirv);
+        grp.add(shaft);
+        const head = new THREE.Mesh(
+          new THREE.ConeGeometry(1.7, 2.6, 10),
+          new THREE.MeshPhongMaterial({color: new THREE.Color(col[0], col[1], col[2]),
+                                       shininess: 30, specular: 0x222222}));
+        head.position.copy(vb);
+        head.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dirv);
+        grp.add(head);
+        structureGroup.add(grp);
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+}
+
+function frameScene(coordsArr) {
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  for (const c of coordsArr) {
+    box.expandByPoint(v.set(c[0], c[1], c[2]));
+  }
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(center);
+  return size;
+}
+
+// ================= structure display & morph =================
+let current = null;
+let morphState = null;
+
+function showStructure(st) {
+  document.getElementById('sname').textContent = st.species;
+  document.getElementById('ssub').textContent =
+    st.accession + ' · ' + st.source +
+    (st.core_identity != null ? ' · core identity ' +
+      Math.round(st.core_identity * 100) + '%' : '');
+  clearGroup();
+  const c = coordsOf(st);
+  addTube(c, st.hydro, st.ss);
+  addHelixRibbons(c, st.ss, st.hydro);
+  addStrandArrows(c, st.ss, st.hydro);
+  addTerminusMarkers(c);
+  const size = frameScene(c);
+  if (!current) {
+    camera.position.set(controls.target.x, controls.target.y + 40,
+                        controls.target.z + size * 0.9);
+  }
+  current = st;
+}
+
+function selectSpecies(sp) {
+  const st = DATA.structures.find(s => s.species === sp);
+  if (!st) return;
+  if (current && current !== st) {
+    startMorph(st);
+  } else if (!current) {
+    showStructure(st);
+  }
+  if (window.__selected) window.__selected.setAttribute('fill', '#e6edf3');
+  const entry = leafIdx[sp];
+  if (entry && entry.t) {
+    entry.t.setAttribute('fill', '#58a6ff');
+    entry.t.setAttribute('font-weight', '700');
+    window.__selected = entry.t;
+  }
+}
+
+// v10: morph duration ~1 second, time-eased (smoothstep) so the motion
+// starts and ends softly — the same feel as the GIF.
+const MORPH_MS = 1000;
+
+function startMorph(target) {
+  const src = current;
+  // stability-masked morph: weights per target residue
+  const weights = pairWeights(src, target);
+  morphState = {src, target, t0: performance.now(), weights};
+  const c0 = buildMorphCoords(src, target, 0, weights);
+  clearGroup();
+  addTube(c0, src.hydro, src.ss);
+  addHelixRibbons(c0, src.ss, src.hydro);
+  addStrandArrows(c0, src.ss, src.hydro);
+  addTerminusMarkers(c0);
+  morphTick();
+}
+
+function morphTick() {
+  if (!morphState) return;
+  const {src, target, t0, weights} = morphState;
+  const f = Math.min(1, (performance.now() - t0) / MORPH_MS);
+  const c = buildMorphCoords(src, target, f, weights);
+  updateTubeCoords(c);
+  // v10: smooth color + SS cross-fade while the chain moves
+  const ssK = morphSS(src.ss, target.ss, src, target, f, weights);
+  const hydroK = morphHydro(src.hydro, target.hydro, src, target, f,
+                            weights);
+  updateTubeColors(ssK, hydroK);
+  // termini markers follow the morphing chain ends
+  if (termMarkers.length >= 4 && c.length >= 2) {
+    termMarkers[0].position.set(c[0][0], c[0][1], c[0][2]);
+    termMarkers[1].position.set(c[0][0], c[0][1] + 6, c[0][2]);
+    termMarkers[2].position.set(c[c.length - 1][0], c[c.length - 1][1],
+                                c[c.length - 1][2]);
+    termMarkers[3].position.set(c[c.length - 1][0], c[c.length - 1][1] + 6,
+                                c[c.length - 1][2]);
+  }
+  if (f < 1) {
+    requestAnimationFrame(morphTick);
+  } else {
+    morphState = null;
+    current = null;
+    showStructure(target);
+  }
+}
+
+// ================= boot =================
+renderTree();
+init3D();
+const init = DATA.structures.find(s => s.accession === DATA.reference) ||
+             DATA.structures[0];
+selectSpecies(init.species);
+</script>
+</body>
+</html>

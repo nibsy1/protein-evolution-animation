@@ -194,6 +194,10 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v14: union-space morph handles both insertions AND deletions. Insertions
+  fade in (radius scales 0→1), deletions collapse and fade out (1→0).
+  DoubleSide material fixes "see inside tube" issue. No more clumped
+  coincident points distorting the CatmullRom spline near conserved helices.
   v13: standard cartoon — round tube with variable thickness (helix thick,
   strand medium, loop thin), smooth transitions at SS boundaries. No more
   elliptical cross-sections. Clean PyMOL/VMD-style cartoon look.
@@ -204,9 +208,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 13
+version: 14
 ---
-# Interactive Evolution Viewer (v13)
+# Interactive Evolution Viewer (v14)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -219,6 +223,23 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v14
+
+- **Union-space morph** — the morph now works in a merged index space that
+  includes paired residues, insertions (target-only), AND deletions
+  (source-only). Previously, source-only C/N-terminal tails simply vanished
+  and all target insertions clumped at a single anchor point, creating
+  CatmullRom spline artifacts that distorted nearby conserved helices.
+- **Insertions fade in** — new residues start with `radiusScale=0` (invisible)
+  and grow to full thickness. Positions are spread along the anchor→target
+  direction to prevent spline degeneracy from coincident points.
+- **Deletions collapse and fade out** — source-only residues (e.g., a long
+  C-terminal tail in Oryza that Phaseolus lacks) stay at their source position
+  at morph start, then collapse toward the nearest paired neighbor while
+  fading to zero thickness. At morph end they are invisible at the anchor.
+- **DoubleSide material** — the tube mesh now renders both sides, fixing the
+  "see inside the tubing" issue where back-facing surfaces were invisible.
 
 ## What's new in v13
 
@@ -319,7 +340,7 @@ Browser: WebGL.
 
 ```
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v13)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v14)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -340,6 +361,11 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v14 UNION-SPACE MORPH + DoubleSide: handles both insertions AND
+    deletions. Insertions fade in (radius 0->1), deletions collapse and
+    fade out (1->0). DoubleSide material fixes "see inside tube" issue.
+    No more spline artifacts from clumped coincident points near
+    conserved helices when C/N-terminal tails differ in length.
   - v13 STANDARD CARTOON: round tube with variable thickness (helix=2.2,
     strand=1.6, loop=0.7 radius), smooth 3-point-averaged transitions at
     SS boundaries. No elliptical cross-sections — clean PyMOL/VMD look.
@@ -905,69 +931,216 @@ function pairWeights(src, tgt) {
 
 function smoothstep(t) { t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); }
 
-// masked morph frame: stable residues hold the source position until the
-// very end; changing residues travel source->target with eased, weight-
-// scaled progress; insertions grow in from the morphing position of their
-// nearest paired neighbor (not the global centroid, which looks like the
-// protein expands from the inner center outwards).
-function buildMorphCoords(src, tgt, f, weights) {
+// v14: build a union-space morph that handles both insertions AND deletions.
+// Returns {coords, ss, hydro, radiusScale} arrays in union space.
+// Union space = merged sequence of: paired residues + insertions + deletions,
+// ordered by their position along the target (for insertions) or source (for deletions).
+// 
+// For each union residue:
+//   - Paired: morph source->target with stability weights
+//   - Insertion (target-only): grow from anchor, fade in (radiusScale = t)
+//   - Deletion (source-only): collapse toward anchor, fade out (radiusScale = 1-t)
+// 
+// This prevents the CatmullRom spline artifacts from clumped coincident points
+// (166 residues at one position) and properly handles source-only C/N-terminal tails.
+function buildUnionMorph(src, tgt, f, weights) {
   const sc = coordsOf(src);
   const tc = coordsOf(tgt);
+  const ssS = src.ss || '';
+  const ssT = tgt.ss || '';
+  const hyS = src.hydro || [];
+  const hyT = tgt.hydro || [];
   const refToSrc = {};
   src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
   const tgtToRef = tgtRefMap(tgt);
+  const srcToRef = new Array(sc.length).fill(null);
+  src.ref_pairs.forEach(([s, r]) => { if (s < srcToRef.length) srcToRef[s] = r; });
   const t = smoothstep(f);
-  const out = new Array(tc.length);
-  // Pass 1: compute positions for paired residues
-  const isPaired = new Array(tc.length).fill(false);
+  
+  // Classify each target residue
+  const tgtIsPaired = new Array(tc.length).fill(false);
+  const tgtSrcIdx = new Array(tc.length).fill(-1);
   for (let i = 0; i < tc.length; i++) {
-    const b = tc[i];
     const r = tgtToRef[i];
     const sIdx = r !== null ? refToSrc[r] : undefined;
     if (sIdx !== undefined && sIdx !== null && sc[sIdx]) {
-      isPaired[i] = true;
-      const a = sc[sIdx];
-      const w = weights[i];
+      tgtIsPaired[i] = true;
+      tgtSrcIdx[i] = sIdx;
+    }
+  }
+  
+  // Classify each source residue
+  const srcIsPaired = new Array(sc.length).fill(false);
+  const srcTgtIdx = new Array(sc.length).fill(-1);
+  for (let i = 0; i < tc.length; i++) {
+    if (tgtIsPaired[i]) {
+      srcIsPaired[tgtSrcIdx[i]] = true;
+      srcTgtIdx[tgtSrcIdx[i]] = i;
+    }
+  }
+  
+  // Build union: walk through target, inserting deletions at the right place
+  // Strategy: iterate over target residues. Before each unpaired target residue
+  // (insertion), check if there are source-only residues (deletions) between
+  // the previous paired residue and the next paired residue.
+  const union = [];  // {type: 'paired'|'ins'|'del', coords, ss, hydro, radiusScale, tgtIdx, srcIdx}
+  
+  // Find insertion/deletion blocks
+  // For each gap between consecutive paired target residues, 
+  // check for insertions (target-only) and deletions (source-only)
+  
+  let tgtPos = 0;
+  while (tgtPos < tc.length) {
+    if (tgtIsPaired[tgtPos]) {
+      // Paired residue
+      const sIdx = tgtSrcIdx[tgtPos];
+      const a = sc[sIdx], b = tc[tgtPos];
+      const w = weights[tgtPos];
+      let pos;
       if (w < 0.15) {
-        // frozen: hold source position until the very end
         const settle = t >= 1 ? 1 : 0;
-        out[i] = [a[0] + (b[0]-a[0]) * settle,
-                  a[1] + (b[1]-a[1]) * settle,
-                  a[2] + (b[2]-a[2]) * settle];
+        pos = [a[0] + (b[0]-a[0]) * settle, a[1] + (b[1]-a[1]) * settle, a[2] + (b[2]-a[2]) * settle];
       } else {
-        // eased progress; at t=1 every residue lands exactly on B
         const eff = t >= 1 ? 1 : w * t;
-        out[i] = [a[0] + (b[0]-a[0]) * eff,
-                  a[1] + (b[1]-a[1]) * eff,
-                  a[2] + (b[2]-a[2]) * eff];
+        pos = [a[0] + (b[0]-a[0]) * eff, a[1] + (b[1]-a[1]) * eff, a[2] + (b[2]-a[2]) * eff];
+      }
+      union.push({
+        type: 'paired', coords: pos,
+        ss: (t >= 1) ? (ssT[tgtPos] || 'C') : (w < 0.5 ? (ssS[sIdx] || 'C') : (ssT[tgtPos] || 'C')),
+        hydro: (hyS[sIdx] || 0) * (1 - f) + (hyT[tgtPos] || 0) * f,
+        radiusScale: 1.0,
+        tgtIdx: tgtPos, srcIdx: sIdx
+      });
+      tgtPos++;
+    } else {
+      // Insertion block: collect consecutive unpaired target residues
+      const insStart = tgtPos;
+      while (tgtPos < tc.length && !tgtIsPaired[tgtPos]) tgtPos++;
+      const insEnd = tgtPos;  // exclusive
+      
+      // Find the anchor: nearest paired residue before or after
+      const anchorBefore = insStart > 0 ? union[union.length - 1] : null;
+      let anchorAfter = null;
+      if (insEnd < tc.length && tgtIsPaired[insEnd]) {
+        // Will be added next iteration, compute its morph position now
+        const sIdxA = tgtSrcIdx[insEnd];
+        const aA = sc[sIdxA], bA = tc[insEnd];
+        const wA = weights[insEnd];
+        const effA = t >= 1 ? 1 : wA * t;
+        anchorAfter = {
+          coords: [aA[0] + (bA[0]-aA[0]) * effA, aA[1] + (bA[1]-aA[1]) * effA, aA[2] + (bA[2]-aA[2]) * effA]
+        };
+      }
+      
+      // Check for deletions between the source indices of surrounding paired residues
+      // The source residues between anchorBefore.srcIdx and anchorAfter's srcIdx
+      // that are unpaired are deletions
+      let delStart = -1, delEnd = -1;
+      if (anchorBefore && anchorBefore.type === 'paired') {
+        delStart = anchorBefore.srcIdx + 1;
+      } else {
+        delStart = 0;
+      }
+      if (anchorAfter) {
+        // Find source index of anchorAfter
+        delEnd = tgtSrcIdx[insEnd];  // exclusive
+      } else {
+        delEnd = sc.length;
+      }
+      
+      // Add deletions first (they come before insertions in the chain)
+      // Deletions collapse toward the preceding anchor
+      for (let sIdx = delStart; sIdx < delEnd; sIdx++) {
+        if (srcIsPaired[sIdx]) continue;  // skip paired (shouldn't happen but safety)
+        const a = sc[sIdx];
+        // Collapse toward anchor: at t=0 stay at source, at t=1 collapse to anchor
+        const anchorPos = anchorBefore ? anchorBefore.coords : a;
+        // Spread term prevents clumping at intermediate t (peaks at t=0.5)
+        const spread = (sIdx - delStart) / Math.max(1, delEnd - delStart);
+        const spreadTerm = spread * (1 - t) * t;  // 0 at t=0 and t=1, max at t=0.5
+        union.push({
+          type: 'del',
+          coords: [
+            a[0] * (1 - t) + anchorPos[0] * t + (a[0] - anchorPos[0]) * spreadTerm,
+            a[1] * (1 - t) + anchorPos[1] * t + (a[1] - anchorPos[1]) * spreadTerm,
+            a[2] * (1 - t) + anchorPos[2] * t + (a[2] - anchorPos[2]) * spreadTerm
+          ],
+          ss: ssS[sIdx] || 'C',
+          hydro: (hyS[sIdx] || 0) * (1 - f),
+          radiusScale: (1 - t),  // fade out
+          tgtIdx: -1, srcIdx: sIdx
+        });
+      }
+      
+      // Add insertions (grow from anchor)
+      for (let i = insStart; i < insEnd; i++) {
+        const b = tc[i];
+        const anchorPos = anchorBefore ? anchorBefore.coords : (anchorAfter ? anchorAfter.coords : b);
+        // Spread along the anchor->target direction by position within block
+        const spread = (i - insStart) / Math.max(1, insEnd - insStart);
+        // At t=0: all at anchor. At t=1: at target. In between: interpolate.
+        // Use spread to offset slightly so points aren't all coincident
+        const dir = [b[0] - anchorPos[0], b[1] - anchorPos[1], b[2] - anchorPos[2]];
+        const len = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+        // Small offset along the direction to prevent spline degeneracy
+        const offset = spread * len * t * 0.3;  // 30% of the way, spread by index
+        union.push({
+          type: 'ins',
+          coords: [
+            anchorPos[0] + dir[0] * t + dir[0] / len * offset * (1 - t),
+            anchorPos[1] + dir[1] * t + dir[1] / len * offset * (1 - t),
+            anchorPos[2] + dir[2] * t + dir[2] / len * offset * (1 - t)
+          ],
+          ss: ssT[i] || 'C',
+          hydro: (hyT[i] || 0) * f,
+          radiusScale: t,  // fade in
+          tgtIdx: i, srcIdx: -1
+        });
       }
     }
   }
-  // Pass 2: insertions grow from nearest paired neighbor's morphing position
-  for (let i = 0; i < tc.length; i++) {
-    if (isPaired[i]) continue;
-    const b = tc[i];
-    // find nearest paired residue (search outward)
-    let anchorPos = null;
-    for (let d = 1; d < tc.length; d++) {
-      if (i - d >= 0 && isPaired[i - d]) { anchorPos = out[i - d]; break; }
-      if (i + d < tc.length && isPaired[i + d]) { anchorPos = out[i + d]; break; }
-    }
-    if (anchorPos) {
-      out[i] = [anchorPos[0] + (b[0]-anchorPos[0]) * t,
-                anchorPos[1] + (b[1]-anchorPos[1]) * t,
-                anchorPos[2] + (b[2]-anchorPos[2]) * t];
-    } else {
-      // fallback: source centroid
-      const cx = sc.reduce((acc, p) => acc + p[0], 0) / sc.length;
-      const cy = sc.reduce((acc, p) => acc + p[1], 0) / sc.length;
-      const cz = sc.reduce((acc, p) => acc + p[2], 0) / sc.length;
-      out[i] = [cx + (b[0]-cx) * t,
-                cy + (b[1]-cy) * t,
-                cz + (b[2]-cz) * t];
+  
+  // Also handle trailing deletions (source-only residues after last paired target)
+  // This happens when source has a longer C-terminal tail
+  // Find the last paired source index
+  let lastPairedSrc = -1;
+  for (let i = 0; i < sc.length; i++) {
+    if (srcIsPaired[i]) lastPairedSrc = i;
+  }
+  // The last union entry should be the last paired residue
+  const lastUnion = union[union.length - 1];
+  if (lastUnion && lastUnion.type === 'paired') {
+    for (let sIdx = lastPairedSrc + 1; sIdx < sc.length; sIdx++) {
+      if (srcIsPaired[sIdx]) continue;
+      const a = sc[sIdx];
+      const anchorPos = lastUnion.coords;
+      const spread = (sIdx - lastPairedSrc - 1) / Math.max(1, sc.length - lastPairedSrc - 1);
+      const spreadTerm = spread * (1 - t) * t;
+      union.push({
+        type: 'del',
+        coords: [
+          a[0] * (1 - t) + anchorPos[0] * t + (a[0] - anchorPos[0]) * spreadTerm,
+          a[1] * (1 - t) + anchorPos[1] * t + (a[1] - anchorPos[1]) * spreadTerm,
+          a[2] * (1 - t) + anchorPos[2] * t + (a[2] - anchorPos[2]) * spreadTerm
+        ],
+        ss: ssS[sIdx] || 'C',
+        hydro: (hyS[sIdx] || 0) * (1 - f),
+        radiusScale: (1 - t),
+        tgtIdx: -1, srcIdx: sIdx
+      });
     }
   }
-  return out;
+  
+  // Handle leading deletions (source-only residues before first paired target)
+  // These should already be handled in the first iteration (anchorBefore = null)
+  
+  return union;
+}
+
+// Legacy buildMorphCoords for backward compatibility (returns just coords array)
+function buildMorphCoords(src, tgt, f, weights) {
+  const union = buildUnionMorph(src, tgt, f, weights);
+  return union.map(u => u.coords);
 }
 
 // ================= three.js scene =================
@@ -1052,7 +1225,8 @@ function addTube(coordsArr, hydro, ss) {
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const mat = new THREE.MeshPhongMaterial({vertexColors: true,
                                           shininess: 30,
-                                          specular: 0x222222});
+                                          specular: 0x222222,
+                                          side: THREE.DoubleSide});
   const mesh = new THREE.Mesh(geo, mat);
   structureGroup.add(mesh);
   activeTube = {mesh, curve, tubular, radial, ringSize, ss};
@@ -1086,7 +1260,7 @@ function smoothRadii(ss, nResidues) {
   return sm;
 }
 
-function updateTubeGeometry(coordsArr, ss) {
+function updateTubeGeometry(coordsArr, ss, radiusScale) {
   const t = activeTube;
   if (!t) return;
   const pts = [];
@@ -1123,13 +1297,21 @@ function updateTubeGeometry(coordsArr, ss) {
       }
     }
     v.crossVectors(N, B).normalize();
-    // Interpolated radius at this ring position
+    // Interpolated radius at this ring position, with optional per-residue
+    // radiusScale for fade in/out of insertions/deletions
     const fi = i * (nRes - 1);
     const ri = Math.floor(fi);
     const frac = fi - ri;
     const r0 = radii[Math.min(ri, nRes - 1)];
     const r1 = radii[Math.min(ri + 1, nRes - 1)];
-    const r = r0 + (r1 - r0) * frac;
+    let r = r0 + (r1 - r0) * frac;
+    if (radiusScale) {
+      const rs0 = radiusScale[Math.min(ri, nRes - 1)];
+      const rs1 = radiusScale[Math.min(ri + 1, nRes - 1)];
+      const rs = rs0 + (rs1 - rs0) * frac;
+      r *= rs;
+      if (r < 0.05) r = 0.05;  // minimum visible radius to avoid degenerate geometry
+    }
     for (let s = 0; s < t.ringSize; s++) {
       const theta = s / t.radial * Math.PI * 2;
       const cx = Math.cos(theta) * r;
@@ -1279,12 +1461,10 @@ function makeTextSprite(text, color) {
   return spr;
 }
 
-function updateTubeCoords(coordsArr) {
-  // v11: delegate to updateTubeGeometry which handles both position AND
-  // per-ring SS-based radius. We need the current SS string for radius.
+function updateTubeCoords(coordsArr, ss, radiusScale) {
   const t = activeTube;
   if (!t) return;
-  updateTubeGeometry(coordsArr, t.ss);
+  updateTubeGeometry(coordsArr, ss || t.ss, radiusScale);
 }
 
 // v11: helix ribbons and strand arrows are REMOVED. The single tube with
@@ -1357,11 +1537,15 @@ function startMorph(target) {
   // stability-masked morph: weights per target residue
   const weights = pairWeights(src, target);
   morphState = {src, target, t0: performance.now(), weights};
-  const c0 = buildMorphCoords(src, target, 0, weights);
-  // v11: only rebuild the tube (with variable-radius geometry) and
-  // terminus markers. No helix boxes / strand arrows to get out of sync.
+  // v14: use union-space morph (handles insertions + deletions)
+  const u0 = buildUnionMorph(src, target, 0, weights);
+  const c0 = u0.map(u => u.coords);
+  const ss0 = u0.map(u => u.ss).join('');
+  const hy0 = u0.map(u => u.hydro);
+  const rs0 = u0.map(u => u.radiusScale);
   clearGroup();
-  addTube(c0, src.hydro, src.ss);
+  addTube(c0, hy0, ss0);
+  updateTubeGeometry(c0, ss0, rs0);
   addTerminusMarkers(c0);
   morphTick();
 }
@@ -1370,13 +1554,13 @@ function morphTick() {
   if (!morphState) return;
   const {src, target, t0, weights} = morphState;
   const f = Math.min(1, (performance.now() - t0) / MORPH_MS);
-  const c = buildMorphCoords(src, target, f, weights);
-  // v11: smooth SS + color cross-fade while the chain moves
-  const ssK = morphSS(src.ss, target.ss, src, target, f, weights);
-  const hydroK = morphHydro(src.hydro, target.hydro, src, target, f,
-                            weights);
-  // Update tube geometry (position + SS-based radius) and colors together
-  updateTubeGeometry(c, ssK);
+  // v14: union-space morph with insertion/deletion fade
+  const union = buildUnionMorph(src, target, f, weights);
+  const c = union.map(u => u.coords);
+  const ssK = union.map(u => u.ss).join('');
+  const hydroK = union.map(u => u.hydro);
+  const rsK = union.map(u => u.radiusScale);
+  updateTubeGeometry(c, ssK, rsK);
   updateTubeColors(ssK, hydroK);
   // termini markers follow the morphing chain ends
   if (termMarkers.length >= 4 && c.length >= 2) {
@@ -1640,15 +1824,23 @@ def _ribbon_axes(coords, i, j):
 
 
 def draw_structure(ax, coords, ss, colors, min_helix=4, min_strand=3,
-                   termini=None):
+                   termini=None, radius_scale=None):
     """Cartoon ribbon: helices as wide ribbons, strands as arrows, loops as
     a thin tube. SS class colors are tinted per segment by mean pLDDT so
     confidence is still readable. Lighting is applied by the caller.
 
     termini: optional (n_idx, c_idx) marking the N- and C-terminal CA
     positions; drawn as small sphere markers with "N"/"C" text labels.
+    radius_scale: optional per-residue array in [0, 1] scaling the ribbon
+    linewidth (used for fade in/out of insertions/deletions during morph).
     """
     coords = np.asarray(coords, dtype=float)
+    if radius_scale is not None:
+        radius_scale = np.asarray(radius_scale, dtype=float)
+        # Scale linewidths: helix 8.5->0, strand 6.5->0, loop 2.2->0
+        lw_scale = radius_scale
+    else:
+        lw_scale = np.ones(len(coords))
     # faint backbone underneath for continuity
     ax.plot(coords[:, 0], coords[:, 1], coords[:, 2],
             color="#30363d", linewidth=0.6, alpha=0.5, zorder=1)
@@ -1671,46 +1863,54 @@ def draw_structure(ax, coords, ss, colors, min_helix=4, min_strand=3,
         tint = (seg_cols.mean(axis=0)[:3] if len(seg_cols)
                 else colors[min(i, len(colors) - 1)][:3])
         col = tuple(np.clip(0.45 * base + 0.55 * tint, 0, 1))
+        # Mean radius scale for this segment (fade in/out)
+        seg_rs = float(lw_scale[i:j].mean()) if len(lw_scale) > j else 1.0
+        seg_alpha = min(1.0, seg_rs * 1.5)  # fade visibility
+        if seg_rs < 0.05:
+            continue  # invisible segment
         if seg_type == "H":
             # helix: wide flat ribbon with darker edge passes -> shaded look
             tangent, normal, _ = _ribbon_axes(coords, i, j)
             off = normal * 0.85
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=8.5, solid_capstyle="round", zorder=3)
+                    linewidth=8.5 * seg_rs, solid_capstyle="round",
+                    zorder=3, alpha=seg_alpha)
             edge = tuple(np.clip(np.array(col) * 0.65, 0, 1))
             ax.plot(pts[:, 0] + off[0], pts[:, 1] + off[1],
                     pts[:, 2] + off[2], color=edge,
-                    linewidth=2.6, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.6 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
             ax.plot(pts[:, 0] - off[0], pts[:, 1] - off[1],
                     pts[:, 2] - off[2], color=edge,
-                    linewidth=2.6, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.6 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
         elif seg_type == "E":
             # strand: wide ribbon + arrow head at the C-terminal end
             tangent, normal, _ = _ribbon_axes(coords, i, j)
             off = normal * 0.70
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=6.5, solid_capstyle="round", zorder=3)
+                    linewidth=6.5 * seg_rs, solid_capstyle="round",
+                    zorder=3, alpha=seg_alpha)
             edge = tuple(np.clip(np.array(col) * 0.65, 0, 1))
             ax.plot(pts[:, 0] + off[0], pts[:, 1] + off[1],
                     pts[:, 2] + off[2], color=edge,
-                    linewidth=2.2, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.2 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
             ax.plot(pts[:, 0] - off[0], pts[:, 1] - off[1],
                     pts[:, 2] - off[2], color=edge,
-                    linewidth=2.2, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.2 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
             tip = pts[-1]
             head = pts[-1] - tangent * 2.6
             ax.plot([head[0], tip[0]], [head[1], tip[1]],
                     [head[2], tip[2]], color=col,
-                    linewidth=9.0, solid_capstyle="butt",
-                    zorder=3)
+                    linewidth=9.0 * seg_rs, solid_capstyle="butt",
+                    zorder=3, alpha=seg_alpha)
         else:
             # loop: thin tube
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=2.2, solid_capstyle="round", zorder=2)
+                    linewidth=2.2 * seg_rs, solid_capstyle="round",
+                    zorder=2, alpha=seg_alpha)
     if termini is not None:
         n_idx, c_idx = termini
         for idx, label, col in ((n_idx, "N", "#58a6ff"),
@@ -1733,7 +1933,18 @@ def render(frames_meta, out_path, fps, size):
     import matplotlib.pyplot as plt
     from matplotlib import animation
 
-    all_pts = np.vstack([f["coords"] for f in frames_meta])
+    # Filter out fully invisible points (radius_scale < 0.05) for bounds
+    visible_pts = []
+    for f in frames_meta:
+        c = np.asarray(f["coords"])
+        rs = f.get("radius_scale")
+        if rs is not None:
+            mask = np.asarray(rs) >= 0.05
+            if mask.any():
+                visible_pts.append(c[mask])
+        else:
+            visible_pts.append(c)
+    all_pts = np.vstack(visible_pts) if visible_pts else np.vstack([f["coords"] for f in frames_meta])
     center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2
     spread = (all_pts.max(axis=0) - all_pts.min(axis=0)).max() / 2 * 1.12
 
@@ -1782,7 +1993,8 @@ def render(frames_meta, out_path, fps, size):
         if termini is not None:
             n_idx, c_idx = termini
             termini = (min(n_idx, len(c) - 1), min(c_idx, len(c) - 1))
-        draw_structure(ax, c, ss, cols, termini=termini)
+        rs = fm.get("radius_scale")
+        draw_structure(ax, c, ss, cols, termini=termini, radius_scale=rs)
         ax.set_xlim(-spread + center[0], spread + center[0])
         ax.set_ylim(-spread + center[1], spread + center[1])
         ax.set_zlim(-spread + center[2], spread + center[2])
@@ -1878,31 +2090,88 @@ def main():
                      if a < len(coords) and b < len(ncoords)]
             weights, a_idx, b_idx = mask.weights(
                 coords, ncoords, pairs, ss, nss)
-            interp = np.asarray(pl.morph_frames(coords, ncoords, pairs,
-                                                weights, args.morph))
+            morph_result = pl.morph_frames(coords, ncoords, pairs,
+                                           weights, args.morph)
+            n_union = len(morph_result[0]["coords"])
             n_cols_next = colors_for(nxt, len(ncoords))
             cols_a = cols[a_idx]
             cols_b = n_cols_next[b_idx]
             n_stable = int((weights < 0.15).sum())
             print(f"[morph] {s['species']} -> {nxt['species']}: "
                   f"{len(pairs)} pairs, {n_stable} frozen "
-                  f"({n_stable / max(len(pairs), 1):.0%})",
+                  f"({n_stable / max(len(pairs), 1):.0%}), "
+                  f"union={n_union}",
                   file=sys.stderr)
-            for k in range(interp.shape[0]):
-                t = k / max(interp.shape[0] - 1, 1)
-                cols_k = cols_a * (1 - t) + cols_b * t
-                # SS per B-residue: stable pairs keep A's class, changing
-                # pairs take B's; insertions take B's class
-                b_to_pos = {b: pos for pos, b in enumerate(b_idx)}
+            # Build per-union-entry colors and SS by mapping back to
+            # A/B indices via the morph result's insertion/deletion flags
+            # We need to reconstruct which union entries map to which
+            # A/B indices. morph_frames doesn't return indices, so we
+            # rebuild them here.
+            b_to_pos = {b: pos for pos, b in enumerate(b_idx)}
+            a_to_pos = {a: pos for pos, a in enumerate(a_idx)}
+            n_a = len(coords)
+            paired_b = np.zeros(len(ncoords), dtype=bool)
+            paired_b[b_idx] = True
+            paired_a = np.zeros(n_a, dtype=bool)
+            paired_a[a_idx] = True
+            # Rebuild union entry -> (b_idx, a_idx, type) mapping
+            union_map = []
+            j = 0
+            while j < len(ncoords):
+                if paired_b[j]:
+                    ai = a_to_pos[j] if j in a_to_pos else None
+                    # Actually a_to_pos maps a_idx -> position in a_idx array
+                    # We need b -> a mapping
+                    pass
+                j += 1
+            # Simpler: build b->a and a->b dicts from pairs
+            b2a = {b: a for a, b in pairs}
+            a2b = {a: b for a, b in pairs}
+            union_map = []
+            j = 0
+            while j < len(ncoords):
+                if paired_b[j]:
+                    union_map.append((j, b2a[j], 'paired'))
+                    j += 1
+                else:
+                    ins_start = j
+                    while j < len(ncoords) and not paired_b[j]:
+                        j += 1
+                    ins_end = j
+                    a_before = b2a[ins_start - 1] if ins_start > 0 else -1
+                    a_after = b2a[ins_end] if ins_end < len(ncoords) else n_a
+                    for ai in range(a_before + 1, a_after):
+                        if not paired_a[ai]:
+                            union_map.append((-1, ai, 'del'))
+                    for bi in range(ins_start, ins_end):
+                        union_map.append((bi, -1, 'ins'))
+            # Trailing deletions
+            if len(a_idx) > 0:
+                last_paired_a = max(a_idx)
+                for ai in range(last_paired_a + 1, n_a):
+                    if not paired_a[ai]:
+                        union_map.append((-1, ai, 'del'))
+
+            for k in range(len(morph_result)):
+                t = k / max(len(morph_result) - 1, 1)
+                frame = morph_result[k]
+                fcoords = frame["coords"]
+                frs = frame["radius_scale"]
+                # Build colors and SS per union entry
+                cols_k = np.zeros((n_union, 3))
                 ss_full = []
-                for j in range(len(ncoords)):
-                    pos = b_to_pos.get(j)
-                    if pos is None:
-                        ss_full.append(nss[j])
-                    else:
+                for u, (bi, ai, typ) in enumerate(union_map):
+                    if typ == 'paired':
+                        pos = b_to_pos[bi]
                         w = weights[pos]
-                        ss_full.append(ss[a_idx[pos]] if w < 0.5
-                                       else nss[b_idx[pos]])
+                        cols_k[u] = cols_a[pos] * (1 - t) + cols_b[pos] * t
+                        ss_full.append(ss[a_idx[pos]] if w < 0.5 else nss[b_idx[pos]])
+                    elif typ == 'ins':
+                        cols_k[u] = n_cols_next[bi]
+                        ss_full.append(nss[bi])
+                    else:  # del
+                        cols_k[u] = cols[ai] * (1 - t)
+                        ss_full.append(ss[ai])
                 frames_meta.append({
                     **{"title": (fm["title"] if t < 0.5 else
                                  f"{LINEAGE_LABELS.get(nxt['lineage'], nxt['lineage'])}"
@@ -1912,10 +2181,11 @@ def main():
                            + (f" \u00b7 core ident "
                               f"{nxt['core_identity']:.0%}"
                               if nxt.get("core_identity") else "")},
-                    "coords": interp[k], "colors": cols_k,
+                    "coords": fcoords, "colors": cols_k,
                     "ss": "".join(ss_full),
-                    "termini": (0, len(ncoords) - 1)
-                    if len(ncoords) else None})
+                    "radius_scale": frs,
+                    "termini": (0, n_union - 1)
+                    if n_union else None})
     render(frames_meta, args.output, args.fps, args.size)
     sheet = frames_meta[::args.hold + args.morph]
     try:
@@ -1931,7 +2201,8 @@ def main():
                 n_idx, c_idx = termini
                 termini = (min(n_idx, len(c) - 1), min(c_idx, len(c) - 1))
             draw_structure(ax, c, ss, np.asarray(fm["colors"])[:, :3],
-                           termini=termini)
+                           termini=termini,
+                           radius_scale=fm.get("radius_scale"))
             ax.set_axis_off()
             ax.set_title(fm["title"], fontsize=7, color="#e6edf3")
             ax.view_init(elev=18, azim=30)

@@ -73,18 +73,21 @@ def test_morph_frames_endpoints_and_freeze():
         a, b, pairs, "C" * 150, "C" * 150)
     frames = pl.morph_frames(a, b, pairs, w, 9)
     assert len(frames) == 9
-    assert np.allclose(frames[0][bi], a[ai]), "frame 0 must equal A"
-    assert np.allclose(frames[-1], b), "last frame must equal B"
+    # frames are now dicts with "coords", "radius_scale", etc.
+    assert np.allclose(frames[0]["coords"], a), "frame 0 must equal A"
+    assert np.allclose(frames[-1]["coords"], b), "last frame must equal B"
     frozen = w < 0.15
-    mid = frames[4]
+    mid = frames[4]["coords"]
     assert np.allclose(mid[bi[frozen]], a[ai[frozen]], atol=1e-6), \
         "frozen residues must hold A's position mid-morph"
+    # All paired, no insertions/deletions -> radius_scale all 1
+    assert np.allclose(frames[0]["radius_scale"], 1.0)
     print("ok test_morph_frames_endpoints_and_freeze")
 
 
 def test_morph_frames_insertions_grow_from_nearest_paired():
     """Insertions should grow from their nearest paired neighbor's morphing
-    position, not the global centroid (v12 fix)."""
+    position with radius_scale fade-in (v14 union-space morph)."""
     a = np.zeros((10, 3))
     a[:, 0] = np.arange(10) * 5.0  # chain along x: 0,5,10,...,45
     b = np.zeros((12, 3))
@@ -93,19 +96,53 @@ def test_morph_frames_insertions_grow_from_nearest_paired():
     pairs = list(zip(range(10), range(10)))
     w = np.zeros(10)
     frames = pl.morph_frames(a, b, pairs, w, 5)
-    # At t=0, insertions should start at the nearest paired residue's
-    # position (residue 9 at [45,0,0]), NOT at centroid [22.5,0,0]
-    assert np.allclose(frames[0][10:], [45.0, 0.0, 0.0]), \
-        f"Insertions should start at nearest paired pos [45,0,0], got {frames[0][10:]}"
-    # At t=1 they reach B
-    assert np.allclose(frames[-1][10:], b[10:])
-    # At midpoint, insertions should be halfway between anchor and target
-    mid = frames[2]
-    t_mid = 0.5  # ease(2/4) = smoothstep(0.5) = 0.5
-    expected = np.array([45.0, 0, 0]) * (1 - t_mid) + b[10] * t_mid
-    assert np.allclose(mid[10], expected, atol=1e-6), \
-        f"Mid insertion should be at {expected}, got {mid[10]}"
+    # Union space: 10 paired + 2 insertions = 12 entries
+    assert len(frames[0]["coords"]) == 12, "Union should have 12 entries"
+    # At t=0, insertions (indices 10, 11) should start at nearest paired
+    # residue's position (residue 9 at [45,0,0])
+    assert np.allclose(frames[0]["coords"][10:], [45.0, 0.0, 0.0]), \
+        f"Insertions at f=0 should be at [45,0,0], got {frames[0]['coords'][10:]}"
+    # Insertions should have radius_scale = 0 at f=0 (invisible)
+    assert np.allclose(frames[0]["radius_scale"][10:], 0.0), \
+        "Insertions should have radius_scale=0 at f=0"
+    # At t=1 they reach B with full radius
+    assert np.allclose(frames[-1]["coords"][10:], b[10:])
+    assert np.allclose(frames[-1]["radius_scale"][10:], 1.0), \
+        "Insertions should have radius_scale=1 at f=1"
+    # Paired residues always have radius_scale=1
+    assert np.allclose(frames[2]["radius_scale"][:10], 1.0)
+    # is_insertion flags
+    assert frames[0]["is_insertion"][10] and frames[0]["is_insertion"][11]
+    assert not frames[0]["is_insertion"][0]
     print("ok test_morph_frames_insertions_grow_from_nearest_paired")
+
+
+def test_morph_frames_deletions_collapse_and_fade():
+    """Deletions (source-only residues) should collapse toward anchor and
+    fade out (v14 union-space morph)."""
+    a = np.zeros((10, 3))
+    a[:, 0] = np.arange(10) * 5.0  # 0,5,...,45
+    b = np.zeros((7, 3))
+    b[:, 0] = np.arange(7) * 5.0  # 0,5,...,30 (first 7 of A)
+    pairs = list(zip(range(7), range(7)))  # only first 7 paired
+    w = np.zeros(7)
+    frames = pl.morph_frames(a, b, pairs, w, 5)
+    # Union: 7 paired + 3 deletions = 10 entries
+    assert len(frames[0]["coords"]) == 10, "Union should have 10 entries"
+    # At f=0, deletions at source positions
+    assert np.allclose(frames[0]["coords"][7:], a[7:]), \
+        f"Deletions at f=0 should be at source, got {frames[0]['coords'][7:]}"
+    # Deletions have radius_scale=1 at f=0
+    assert np.allclose(frames[0]["radius_scale"][7:], 1.0)
+    # At f=1, deletions collapsed to anchor (last paired = [30,0,0])
+    assert np.allclose(frames[-1]["coords"][7:], [30.0, 0, 0]), \
+        f"Deletions at f=1 should be collapsed to anchor, got {frames[-1]['coords'][7:]}"
+    # Deletions have radius_scale=0 at f=1
+    assert np.allclose(frames[-1]["radius_scale"][7:], 0.0)
+    # is_deletion flags
+    assert frames[0]["is_deletion"][7] and frames[0]["is_deletion"][9]
+    assert not frames[0]["is_deletion"][0]
+    print("ok test_morph_frames_deletions_collapse_and_fade")
 
 
 def test_write_ca_pdb_ribbon_records(tmp_path=None):
@@ -233,6 +270,7 @@ def main():
     test_stability_mask_ss_change_animates()
     test_morph_frames_endpoints_and_freeze()
     test_morph_frames_insertions_grow_from_nearest_paired()
+    test_morph_frames_deletions_collapse_and_fade()
     test_write_ca_pdb_ribbon_records()
     test_kabsch_identity()
     test_reference_pairs_anchored()

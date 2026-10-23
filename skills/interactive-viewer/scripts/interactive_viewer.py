@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v13)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v14)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -20,6 +20,11 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v14 UNION-SPACE MORPH + DoubleSide: handles both insertions AND
+    deletions. Insertions fade in (radius 0->1), deletions collapse and
+    fade out (1->0). DoubleSide material fixes "see inside tube" issue.
+    No more spline artifacts from clumped coincident points near
+    conserved helices when C/N-terminal tails differ in length.
   - v13 STANDARD CARTOON: round tube with variable thickness (helix=2.2,
     strand=1.6, loop=0.7 radius), smooth 3-point-averaged transitions at
     SS boundaries. No elliptical cross-sections — clean PyMOL/VMD look.

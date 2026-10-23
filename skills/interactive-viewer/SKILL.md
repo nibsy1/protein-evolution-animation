@@ -6,6 +6,10 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v14: union-space morph handles both insertions AND deletions. Insertions
+  fade in (radius scales 0→1), deletions collapse and fade out (1→0).
+  DoubleSide material fixes "see inside tube" issue. No more clumped
+  coincident points distorting the CatmullRom spline near conserved helices.
   v13: standard cartoon — round tube with variable thickness (helix thick,
   strand medium, loop thin), smooth transitions at SS boundaries. No more
   elliptical cross-sections. Clean PyMOL/VMD-style cartoon look.
@@ -16,9 +20,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 13
+version: 14
 ---
-# Interactive Evolution Viewer (v13)
+# Interactive Evolution Viewer (v14)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -31,6 +35,23 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v14
+
+- **Union-space morph** — the morph now works in a merged index space that
+  includes paired residues, insertions (target-only), AND deletions
+  (source-only). Previously, source-only C/N-terminal tails simply vanished
+  and all target insertions clumped at a single anchor point, creating
+  CatmullRom spline artifacts that distorted nearby conserved helices.
+- **Insertions fade in** — new residues start with `radiusScale=0` (invisible)
+  and grow to full thickness. Positions are spread along the anchor→target
+  direction to prevent spline degeneracy from coincident points.
+- **Deletions collapse and fade out** — source-only residues (e.g., a long
+  C-terminal tail in Oryza that Phaseolus lacks) stay at their source position
+  at morph start, then collapse toward the nearest paired neighbor while
+  fading to zero thickness. At morph end they are invisible at the anchor.
+- **DoubleSide material** — the tube mesh now renders both sides, fixing the
+  "see inside the tubing" issue where back-facing surfaces were invisible.
 
 ## What's new in v13
 

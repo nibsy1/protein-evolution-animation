@@ -107,15 +107,23 @@ def _ribbon_axes(coords, i, j):
 
 
 def draw_structure(ax, coords, ss, colors, min_helix=4, min_strand=3,
-                   termini=None):
+                   termini=None, radius_scale=None):
     """Cartoon ribbon: helices as wide ribbons, strands as arrows, loops as
     a thin tube. SS class colors are tinted per segment by mean pLDDT so
     confidence is still readable. Lighting is applied by the caller.
 
     termini: optional (n_idx, c_idx) marking the N- and C-terminal CA
     positions; drawn as small sphere markers with "N"/"C" text labels.
+    radius_scale: optional per-residue array in [0, 1] scaling the ribbon
+    linewidth (used for fade in/out of insertions/deletions during morph).
     """
     coords = np.asarray(coords, dtype=float)
+    if radius_scale is not None:
+        radius_scale = np.asarray(radius_scale, dtype=float)
+        # Scale linewidths: helix 8.5->0, strand 6.5->0, loop 2.2->0
+        lw_scale = radius_scale
+    else:
+        lw_scale = np.ones(len(coords))
     # faint backbone underneath for continuity
     ax.plot(coords[:, 0], coords[:, 1], coords[:, 2],
             color="#30363d", linewidth=0.6, alpha=0.5, zorder=1)
@@ -138,46 +146,54 @@ def draw_structure(ax, coords, ss, colors, min_helix=4, min_strand=3,
         tint = (seg_cols.mean(axis=0)[:3] if len(seg_cols)
                 else colors[min(i, len(colors) - 1)][:3])
         col = tuple(np.clip(0.45 * base + 0.55 * tint, 0, 1))
+        # Mean radius scale for this segment (fade in/out)
+        seg_rs = float(lw_scale[i:j].mean()) if len(lw_scale) > j else 1.0
+        seg_alpha = min(1.0, seg_rs * 1.5)  # fade visibility
+        if seg_rs < 0.05:
+            continue  # invisible segment
         if seg_type == "H":
             # helix: wide flat ribbon with darker edge passes -> shaded look
             tangent, normal, _ = _ribbon_axes(coords, i, j)
             off = normal * 0.85
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=8.5, solid_capstyle="round", zorder=3)
+                    linewidth=8.5 * seg_rs, solid_capstyle="round",
+                    zorder=3, alpha=seg_alpha)
             edge = tuple(np.clip(np.array(col) * 0.65, 0, 1))
             ax.plot(pts[:, 0] + off[0], pts[:, 1] + off[1],
                     pts[:, 2] + off[2], color=edge,
-                    linewidth=2.6, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.6 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
             ax.plot(pts[:, 0] - off[0], pts[:, 1] - off[1],
                     pts[:, 2] - off[2], color=edge,
-                    linewidth=2.6, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.6 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
         elif seg_type == "E":
             # strand: wide ribbon + arrow head at the C-terminal end
             tangent, normal, _ = _ribbon_axes(coords, i, j)
             off = normal * 0.70
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=6.5, solid_capstyle="round", zorder=3)
+                    linewidth=6.5 * seg_rs, solid_capstyle="round",
+                    zorder=3, alpha=seg_alpha)
             edge = tuple(np.clip(np.array(col) * 0.65, 0, 1))
             ax.plot(pts[:, 0] + off[0], pts[:, 1] + off[1],
                     pts[:, 2] + off[2], color=edge,
-                    linewidth=2.2, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.2 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
             ax.plot(pts[:, 0] - off[0], pts[:, 1] - off[1],
                     pts[:, 2] - off[2], color=edge,
-                    linewidth=2.2, solid_capstyle="round",
-                    alpha=0.95, zorder=2)
+                    linewidth=2.2 * seg_rs, solid_capstyle="round",
+                    alpha=0.95 * seg_alpha, zorder=2)
             tip = pts[-1]
             head = pts[-1] - tangent * 2.6
             ax.plot([head[0], tip[0]], [head[1], tip[1]],
                     [head[2], tip[2]], color=col,
-                    linewidth=9.0, solid_capstyle="butt",
-                    zorder=3)
+                    linewidth=9.0 * seg_rs, solid_capstyle="butt",
+                    zorder=3, alpha=seg_alpha)
         else:
             # loop: thin tube
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=col,
-                    linewidth=2.2, solid_capstyle="round", zorder=2)
+                    linewidth=2.2 * seg_rs, solid_capstyle="round",
+                    zorder=2, alpha=seg_alpha)
     if termini is not None:
         n_idx, c_idx = termini
         for idx, label, col in ((n_idx, "N", "#58a6ff"),
@@ -200,7 +216,18 @@ def render(frames_meta, out_path, fps, size):
     import matplotlib.pyplot as plt
     from matplotlib import animation
 
-    all_pts = np.vstack([f["coords"] for f in frames_meta])
+    # Filter out fully invisible points (radius_scale < 0.05) for bounds
+    visible_pts = []
+    for f in frames_meta:
+        c = np.asarray(f["coords"])
+        rs = f.get("radius_scale")
+        if rs is not None:
+            mask = np.asarray(rs) >= 0.05
+            if mask.any():
+                visible_pts.append(c[mask])
+        else:
+            visible_pts.append(c)
+    all_pts = np.vstack(visible_pts) if visible_pts else np.vstack([f["coords"] for f in frames_meta])
     center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2
     spread = (all_pts.max(axis=0) - all_pts.min(axis=0)).max() / 2 * 1.12
 
@@ -249,7 +276,8 @@ def render(frames_meta, out_path, fps, size):
         if termini is not None:
             n_idx, c_idx = termini
             termini = (min(n_idx, len(c) - 1), min(c_idx, len(c) - 1))
-        draw_structure(ax, c, ss, cols, termini=termini)
+        rs = fm.get("radius_scale")
+        draw_structure(ax, c, ss, cols, termini=termini, radius_scale=rs)
         ax.set_xlim(-spread + center[0], spread + center[0])
         ax.set_ylim(-spread + center[1], spread + center[1])
         ax.set_zlim(-spread + center[2], spread + center[2])
@@ -345,31 +373,88 @@ def main():
                      if a < len(coords) and b < len(ncoords)]
             weights, a_idx, b_idx = mask.weights(
                 coords, ncoords, pairs, ss, nss)
-            interp = np.asarray(pl.morph_frames(coords, ncoords, pairs,
-                                                weights, args.morph))
+            morph_result = pl.morph_frames(coords, ncoords, pairs,
+                                           weights, args.morph)
+            n_union = len(morph_result[0]["coords"])
             n_cols_next = colors_for(nxt, len(ncoords))
             cols_a = cols[a_idx]
             cols_b = n_cols_next[b_idx]
             n_stable = int((weights < 0.15).sum())
             print(f"[morph] {s['species']} -> {nxt['species']}: "
                   f"{len(pairs)} pairs, {n_stable} frozen "
-                  f"({n_stable / max(len(pairs), 1):.0%})",
+                  f"({n_stable / max(len(pairs), 1):.0%}), "
+                  f"union={n_union}",
                   file=sys.stderr)
-            for k in range(interp.shape[0]):
-                t = k / max(interp.shape[0] - 1, 1)
-                cols_k = cols_a * (1 - t) + cols_b * t
-                # SS per B-residue: stable pairs keep A's class, changing
-                # pairs take B's; insertions take B's class
-                b_to_pos = {b: pos for pos, b in enumerate(b_idx)}
+            # Build per-union-entry colors and SS by mapping back to
+            # A/B indices via the morph result's insertion/deletion flags
+            # We need to reconstruct which union entries map to which
+            # A/B indices. morph_frames doesn't return indices, so we
+            # rebuild them here.
+            b_to_pos = {b: pos for pos, b in enumerate(b_idx)}
+            a_to_pos = {a: pos for pos, a in enumerate(a_idx)}
+            n_a = len(coords)
+            paired_b = np.zeros(len(ncoords), dtype=bool)
+            paired_b[b_idx] = True
+            paired_a = np.zeros(n_a, dtype=bool)
+            paired_a[a_idx] = True
+            # Rebuild union entry -> (b_idx, a_idx, type) mapping
+            union_map = []
+            j = 0
+            while j < len(ncoords):
+                if paired_b[j]:
+                    ai = a_to_pos[j] if j in a_to_pos else None
+                    # Actually a_to_pos maps a_idx -> position in a_idx array
+                    # We need b -> a mapping
+                    pass
+                j += 1
+            # Simpler: build b->a and a->b dicts from pairs
+            b2a = {b: a for a, b in pairs}
+            a2b = {a: b for a, b in pairs}
+            union_map = []
+            j = 0
+            while j < len(ncoords):
+                if paired_b[j]:
+                    union_map.append((j, b2a[j], 'paired'))
+                    j += 1
+                else:
+                    ins_start = j
+                    while j < len(ncoords) and not paired_b[j]:
+                        j += 1
+                    ins_end = j
+                    a_before = b2a[ins_start - 1] if ins_start > 0 else -1
+                    a_after = b2a[ins_end] if ins_end < len(ncoords) else n_a
+                    for ai in range(a_before + 1, a_after):
+                        if not paired_a[ai]:
+                            union_map.append((-1, ai, 'del'))
+                    for bi in range(ins_start, ins_end):
+                        union_map.append((bi, -1, 'ins'))
+            # Trailing deletions
+            if len(a_idx) > 0:
+                last_paired_a = max(a_idx)
+                for ai in range(last_paired_a + 1, n_a):
+                    if not paired_a[ai]:
+                        union_map.append((-1, ai, 'del'))
+
+            for k in range(len(morph_result)):
+                t = k / max(len(morph_result) - 1, 1)
+                frame = morph_result[k]
+                fcoords = frame["coords"]
+                frs = frame["radius_scale"]
+                # Build colors and SS per union entry
+                cols_k = np.zeros((n_union, 3))
                 ss_full = []
-                for j in range(len(ncoords)):
-                    pos = b_to_pos.get(j)
-                    if pos is None:
-                        ss_full.append(nss[j])
-                    else:
+                for u, (bi, ai, typ) in enumerate(union_map):
+                    if typ == 'paired':
+                        pos = b_to_pos[bi]
                         w = weights[pos]
-                        ss_full.append(ss[a_idx[pos]] if w < 0.5
-                                       else nss[b_idx[pos]])
+                        cols_k[u] = cols_a[pos] * (1 - t) + cols_b[pos] * t
+                        ss_full.append(ss[a_idx[pos]] if w < 0.5 else nss[b_idx[pos]])
+                    elif typ == 'ins':
+                        cols_k[u] = n_cols_next[bi]
+                        ss_full.append(nss[bi])
+                    else:  # del
+                        cols_k[u] = cols[ai] * (1 - t)
+                        ss_full.append(ss[ai])
                 frames_meta.append({
                     **{"title": (fm["title"] if t < 0.5 else
                                  f"{LINEAGE_LABELS.get(nxt['lineage'], nxt['lineage'])}"
@@ -379,10 +464,11 @@ def main():
                            + (f" \u00b7 core ident "
                               f"{nxt['core_identity']:.0%}"
                               if nxt.get("core_identity") else "")},
-                    "coords": interp[k], "colors": cols_k,
+                    "coords": fcoords, "colors": cols_k,
                     "ss": "".join(ss_full),
-                    "termini": (0, len(ncoords) - 1)
-                    if len(ncoords) else None})
+                    "radius_scale": frs,
+                    "termini": (0, n_union - 1)
+                    if n_union else None})
     render(frames_meta, args.output, args.fps, args.size)
     sheet = frames_meta[::args.hold + args.morph]
     try:
@@ -398,7 +484,8 @@ def main():
                 n_idx, c_idx = termini
                 termini = (min(n_idx, len(c) - 1), min(c_idx, len(c) - 1))
             draw_structure(ax, c, ss, np.asarray(fm["colors"])[:, :3],
-                           termini=termini)
+                           termini=termini,
+                           radius_scale=fm.get("radius_scale"))
             ax.set_axis_off()
             ax.set_title(fm["title"], fontsize=7, color="#e6edf3")
             ax.view_init(elev=18, azim=30)

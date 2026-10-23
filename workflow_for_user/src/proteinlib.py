@@ -394,72 +394,156 @@ def chain_orientation_ok(struct, reference):
 
 def morph_frames(coords_a, coords_b, pairs, weights, n_frames,
                  fade_in=None):
-    """Generate n_frames masked-morph frames (reference = B indexing).
+    """Generate n_frames masked-morph frames (union space: handles both
+    insertions and deletions).
+
+    Returns frames in UNION space: paired residues + insertions (B-only)
+    + deletions (A-only). Each frame is a dict with:
+      "coords": (n_union, 3) array
+      "radius_scale": (n_union,) array — 1.0 for paired, t for insertions
+        (fade in), 1-t for deletions (fade out)
+      "is_insertion": (n_union,) bool array
+      "is_deletion": (n_union,) bool array
 
     Stable pairs (weight ~0) are anchored to A's position for the whole
-    morph and only snap to B at the very end (a sub-Angstrom correction,
-    invisible in practice), so a conserved helix visibly stays put.
-    Changing pairs travel the full A->B distance with smoothstep easing.
-    B-only residues (insertions) grow in from the morphing position of
-    their nearest paired neighbor (not the global centroid, which makes
-    the protein look like it expands from the inner center outwards).
+    morph and only snap to B at the very end, so a conserved helix stays
+    put. Insertions grow from the nearest paired neighbor's morphing
+    position and fade in (radius_scale = t). Deletions collapse toward
+    the nearest paired neighbor and fade out (radius_scale = 1-t).
 
     fade_in: optional boolean array over B marking insertions explicitly.
     """
     coords_a = np.asarray(coords_a, dtype=float)
     coords_b = np.asarray(coords_b, dtype=float)
+    n_a = len(coords_a)
     n_b = len(coords_b)
     a_idx = np.array([p[0] for p in pairs], dtype=int)
     b_idx = np.array([p[1] for p in pairs], dtype=int)
     w = np.asarray(weights, dtype=float)
     paired_b = np.zeros(n_b, dtype=bool)
     paired_b[b_idx] = True
-    centroid_a = coords_a.mean(axis=0)
+    paired_a = np.zeros(n_a, dtype=bool)
+    paired_a[a_idx] = True
     frozen = w < 0.15
-    # Precompute nearest paired neighbor for each B residue (for insertions)
     ins = ~paired_b
     if fade_in is not None:
         ins = ins | np.asarray(fade_in, dtype=bool)
-    nearest_paired = np.full(n_b, -1, dtype=int)
-    for j in range(n_b):
+    dele = ~paired_a
+
+    # Build union index mapping: walk through B, insert A-only residues
+    # (deletions) at the right positions. Each union entry has:
+    # (b_idx or -1, a_idx or -1, type)
+    union_entries = []  # list of (b_idx, a_idx, 'paired'|'ins'|'del')
+    b_to_a = {b: a for a, b in zip(a_idx, b_idx)}
+    a_to_b = {a: b for a, b in zip(a_idx, b_idx)}
+
+    j = 0  # B pointer
+    while j < n_b:
         if paired_b[j]:
-            nearest_paired[j] = j
-    # Forward/backward fill: each insertion gets the nearest paired residue
-    last = -1
-    for j in range(n_b):
-        if nearest_paired[j] >= 0:
-            last = j
-        elif last >= 0:
-            nearest_paired[j] = last
-    last = -1
-    for j in range(n_b - 1, -1, -1):
-        if nearest_paired[j] >= 0:
-            last = j
-        elif last >= 0:
-            nearest_paired[j] = last
+            union_entries.append((j, b_to_a[j], 'paired'))
+            j += 1
+        else:
+            # Insertion block in B; check for deletions in A between
+            # surrounding paired residues
+            ins_start = j
+            while j < n_b and not paired_b[j]:
+                j += 1
+            ins_end = j
+            # Find A range for deletions: between the A indices of the
+            # paired residues surrounding this gap
+            a_before = b_to_a[ins_start - 1] if ins_start > 0 else -1
+            a_after = b_to_a[ins_end] if ins_end < n_b else n_a
+            # Add deletions (A-only residues in this gap)
+            for ai in range(a_before + 1, a_after):
+                if not paired_a[ai]:
+                    union_entries.append((-1, ai, 'del'))
+            # Add insertions
+            for bi in range(ins_start, ins_end):
+                union_entries.append((bi, -1, 'ins'))
+    # Trailing deletions (A-only after last paired B)
+    if len(a_idx) > 0:
+        last_paired_a = max(a_idx)
+        for ai in range(last_paired_a + 1, n_a):
+            if not paired_a[ai]:
+                union_entries.append((-1, ai, 'del'))
+
+    n_union = len(union_entries)
+    # Precompute weight lookup per union entry
+    w_union = np.ones(n_union)
+    bpos_union = np.full(n_union, -1, dtype=int)
+    apos_union = np.full(n_union, -1, dtype=int)
+    for u, (bi, ai, typ) in enumerate(union_entries):
+        bpos_union[u] = bi
+        apos_union[u] = ai
+        if typ == 'paired':
+            # find weight for this pair
+            w_union[u] = w[np.where(b_idx == bi)[0][0]]
+
     frames = []
     for k in range(n_frames):
         t = ease(k / max(n_frames - 1, 1))
-        out = coords_b.copy()
-        eff = w * t
-        out[b_idx] = (coords_a[a_idx] * (1 - eff)[:, None]
-                      + coords_b[b_idx] * eff[:, None])
-        # frozen residues hold A's position until the very end, then settle
-        if frozen.any():
-            settle = 1.0 if t >= 1.0 else 0.0
-            out[b_idx[frozen]] = (coords_a[a_idx[frozen]] * (1 - settle)
-                                  + coords_b[b_idx[frozen]] * settle)
-        if ins.any():
-            ins_idx = np.where(ins)[0]
-            anchors = nearest_paired[ins_idx]
-            # anchor positions in the current frame (already morphed above)
-            anchor_pos = out[anchors]
-            out[ins_idx] = (anchor_pos * (1 - t)
-                            + coords_b[ins_idx] * t)
-        frames.append(out)
-    # exact endpoints
-    frames[0][b_idx] = coords_a[a_idx]
-    frames[-1] = coords_b.copy()
+        out = np.zeros((n_union, 3))
+        rs = np.ones(n_union)
+        is_ins = np.zeros(n_union, dtype=bool)
+        is_del = np.zeros(n_union, dtype=bool)
+
+        for u, (bi, ai, typ) in enumerate(union_entries):
+            if typ == 'paired':
+                a = coords_a[ai]
+                b = coords_b[bi]
+                wu = w_union[u]
+                if wu < 0.15:
+                    settle = 1.0 if t >= 1.0 else 0.0
+                    out[u] = a * (1 - settle) + b * settle
+                else:
+                    eff = 1.0 if t >= 1.0 else wu * t
+                    out[u] = a * (1 - eff) + b * eff
+                rs[u] = 1.0
+            elif typ == 'ins':
+                # Grow from nearest paired neighbor's morphing position
+                anchor_u = u - 1  # preceding union entry
+                while anchor_u >= 0 and union_entries[anchor_u][2] != 'paired':
+                    anchor_u -= 1
+                if anchor_u < 0:
+                    # Search forward
+                    anchor_u = u + 1
+                    while anchor_u < n_union and union_entries[anchor_u][2] != 'paired':
+                        anchor_u += 1
+                if anchor_u >= 0 and anchor_u < n_union:
+                    anchor_pos = out[anchor_u]
+                else:
+                    anchor_pos = coords_a.mean(axis=0)
+                b = coords_b[bi]
+                out[u] = anchor_pos * (1 - t) + b * t
+                rs[u] = t
+                is_ins[u] = True
+            elif typ == 'del':
+                # Collapse toward nearest paired neighbor
+                anchor_u = u - 1
+                while anchor_u >= 0 and union_entries[anchor_u][2] != 'paired':
+                    anchor_u -= 1
+                if anchor_u < 0:
+                    anchor_u = u + 1
+                    while anchor_u < n_union and union_entries[anchor_u][2] != 'paired':
+                        anchor_u += 1
+                if anchor_u >= 0 and anchor_u < n_union:
+                    anchor_pos = out[anchor_u]
+                else:
+                    anchor_pos = coords_a[ai]
+                a = coords_a[ai]
+                out[u] = a * (1 - t) + anchor_pos * t
+                rs[u] = 1.0 - t
+                is_del[u] = True
+
+        frames.append({
+            "coords": out,
+            "radius_scale": rs,
+            "is_insertion": is_ins,
+            "is_deletion": is_del,
+        })
+
+    # Exact endpoints: at t=0, paired at A, insertions at anchor, deletions at A
+    # At t=1, paired at B, insertions at B, deletions at anchor (rs=0)
     return frames
 
 

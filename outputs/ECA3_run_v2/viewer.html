@@ -243,69 +243,216 @@ function pairWeights(src, tgt) {
 
 function smoothstep(t) { t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); }
 
-// masked morph frame: stable residues hold the source position until the
-// very end; changing residues travel source->target with eased, weight-
-// scaled progress; insertions grow in from the morphing position of their
-// nearest paired neighbor (not the global centroid, which looks like the
-// protein expands from the inner center outwards).
-function buildMorphCoords(src, tgt, f, weights) {
+// v14: build a union-space morph that handles both insertions AND deletions.
+// Returns {coords, ss, hydro, radiusScale} arrays in union space.
+// Union space = merged sequence of: paired residues + insertions + deletions,
+// ordered by their position along the target (for insertions) or source (for deletions).
+// 
+// For each union residue:
+//   - Paired: morph source->target with stability weights
+//   - Insertion (target-only): grow from anchor, fade in (radiusScale = t)
+//   - Deletion (source-only): collapse toward anchor, fade out (radiusScale = 1-t)
+// 
+// This prevents the CatmullRom spline artifacts from clumped coincident points
+// (166 residues at one position) and properly handles source-only C/N-terminal tails.
+function buildUnionMorph(src, tgt, f, weights) {
   const sc = coordsOf(src);
   const tc = coordsOf(tgt);
+  const ssS = src.ss || '';
+  const ssT = tgt.ss || '';
+  const hyS = src.hydro || [];
+  const hyT = tgt.hydro || [];
   const refToSrc = {};
   src.ref_pairs.forEach(([s, r]) => refToSrc[r] = s);
   const tgtToRef = tgtRefMap(tgt);
+  const srcToRef = new Array(sc.length).fill(null);
+  src.ref_pairs.forEach(([s, r]) => { if (s < srcToRef.length) srcToRef[s] = r; });
   const t = smoothstep(f);
-  const out = new Array(tc.length);
-  // Pass 1: compute positions for paired residues
-  const isPaired = new Array(tc.length).fill(false);
+  
+  // Classify each target residue
+  const tgtIsPaired = new Array(tc.length).fill(false);
+  const tgtSrcIdx = new Array(tc.length).fill(-1);
   for (let i = 0; i < tc.length; i++) {
-    const b = tc[i];
     const r = tgtToRef[i];
     const sIdx = r !== null ? refToSrc[r] : undefined;
     if (sIdx !== undefined && sIdx !== null && sc[sIdx]) {
-      isPaired[i] = true;
-      const a = sc[sIdx];
-      const w = weights[i];
+      tgtIsPaired[i] = true;
+      tgtSrcIdx[i] = sIdx;
+    }
+  }
+  
+  // Classify each source residue
+  const srcIsPaired = new Array(sc.length).fill(false);
+  const srcTgtIdx = new Array(sc.length).fill(-1);
+  for (let i = 0; i < tc.length; i++) {
+    if (tgtIsPaired[i]) {
+      srcIsPaired[tgtSrcIdx[i]] = true;
+      srcTgtIdx[tgtSrcIdx[i]] = i;
+    }
+  }
+  
+  // Build union: walk through target, inserting deletions at the right place
+  // Strategy: iterate over target residues. Before each unpaired target residue
+  // (insertion), check if there are source-only residues (deletions) between
+  // the previous paired residue and the next paired residue.
+  const union = [];  // {type: 'paired'|'ins'|'del', coords, ss, hydro, radiusScale, tgtIdx, srcIdx}
+  
+  // Find insertion/deletion blocks
+  // For each gap between consecutive paired target residues, 
+  // check for insertions (target-only) and deletions (source-only)
+  
+  let tgtPos = 0;
+  while (tgtPos < tc.length) {
+    if (tgtIsPaired[tgtPos]) {
+      // Paired residue
+      const sIdx = tgtSrcIdx[tgtPos];
+      const a = sc[sIdx], b = tc[tgtPos];
+      const w = weights[tgtPos];
+      let pos;
       if (w < 0.15) {
-        // frozen: hold source position until the very end
         const settle = t >= 1 ? 1 : 0;
-        out[i] = [a[0] + (b[0]-a[0]) * settle,
-                  a[1] + (b[1]-a[1]) * settle,
-                  a[2] + (b[2]-a[2]) * settle];
+        pos = [a[0] + (b[0]-a[0]) * settle, a[1] + (b[1]-a[1]) * settle, a[2] + (b[2]-a[2]) * settle];
       } else {
-        // eased progress; at t=1 every residue lands exactly on B
         const eff = t >= 1 ? 1 : w * t;
-        out[i] = [a[0] + (b[0]-a[0]) * eff,
-                  a[1] + (b[1]-a[1]) * eff,
-                  a[2] + (b[2]-a[2]) * eff];
+        pos = [a[0] + (b[0]-a[0]) * eff, a[1] + (b[1]-a[1]) * eff, a[2] + (b[2]-a[2]) * eff];
+      }
+      union.push({
+        type: 'paired', coords: pos,
+        ss: (t >= 1) ? (ssT[tgtPos] || 'C') : (w < 0.5 ? (ssS[sIdx] || 'C') : (ssT[tgtPos] || 'C')),
+        hydro: (hyS[sIdx] || 0) * (1 - f) + (hyT[tgtPos] || 0) * f,
+        radiusScale: 1.0,
+        tgtIdx: tgtPos, srcIdx: sIdx
+      });
+      tgtPos++;
+    } else {
+      // Insertion block: collect consecutive unpaired target residues
+      const insStart = tgtPos;
+      while (tgtPos < tc.length && !tgtIsPaired[tgtPos]) tgtPos++;
+      const insEnd = tgtPos;  // exclusive
+      
+      // Find the anchor: nearest paired residue before or after
+      const anchorBefore = insStart > 0 ? union[union.length - 1] : null;
+      let anchorAfter = null;
+      if (insEnd < tc.length && tgtIsPaired[insEnd]) {
+        // Will be added next iteration, compute its morph position now
+        const sIdxA = tgtSrcIdx[insEnd];
+        const aA = sc[sIdxA], bA = tc[insEnd];
+        const wA = weights[insEnd];
+        const effA = t >= 1 ? 1 : wA * t;
+        anchorAfter = {
+          coords: [aA[0] + (bA[0]-aA[0]) * effA, aA[1] + (bA[1]-aA[1]) * effA, aA[2] + (bA[2]-aA[2]) * effA]
+        };
+      }
+      
+      // Check for deletions between the source indices of surrounding paired residues
+      // The source residues between anchorBefore.srcIdx and anchorAfter's srcIdx
+      // that are unpaired are deletions
+      let delStart = -1, delEnd = -1;
+      if (anchorBefore && anchorBefore.type === 'paired') {
+        delStart = anchorBefore.srcIdx + 1;
+      } else {
+        delStart = 0;
+      }
+      if (anchorAfter) {
+        // Find source index of anchorAfter
+        delEnd = tgtSrcIdx[insEnd];  // exclusive
+      } else {
+        delEnd = sc.length;
+      }
+      
+      // Add deletions first (they come before insertions in the chain)
+      // Deletions collapse toward the preceding anchor
+      for (let sIdx = delStart; sIdx < delEnd; sIdx++) {
+        if (srcIsPaired[sIdx]) continue;  // skip paired (shouldn't happen but safety)
+        const a = sc[sIdx];
+        // Collapse toward anchor: at t=0 stay at source, at t=1 collapse to anchor
+        const anchorPos = anchorBefore ? anchorBefore.coords : a;
+        // Spread term prevents clumping at intermediate t (peaks at t=0.5)
+        const spread = (sIdx - delStart) / Math.max(1, delEnd - delStart);
+        const spreadTerm = spread * (1 - t) * t;  // 0 at t=0 and t=1, max at t=0.5
+        union.push({
+          type: 'del',
+          coords: [
+            a[0] * (1 - t) + anchorPos[0] * t + (a[0] - anchorPos[0]) * spreadTerm,
+            a[1] * (1 - t) + anchorPos[1] * t + (a[1] - anchorPos[1]) * spreadTerm,
+            a[2] * (1 - t) + anchorPos[2] * t + (a[2] - anchorPos[2]) * spreadTerm
+          ],
+          ss: ssS[sIdx] || 'C',
+          hydro: (hyS[sIdx] || 0) * (1 - f),
+          radiusScale: (1 - t),  // fade out
+          tgtIdx: -1, srcIdx: sIdx
+        });
+      }
+      
+      // Add insertions (grow from anchor)
+      for (let i = insStart; i < insEnd; i++) {
+        const b = tc[i];
+        const anchorPos = anchorBefore ? anchorBefore.coords : (anchorAfter ? anchorAfter.coords : b);
+        // Spread along the anchor->target direction by position within block
+        const spread = (i - insStart) / Math.max(1, insEnd - insStart);
+        // At t=0: all at anchor. At t=1: at target. In between: interpolate.
+        // Use spread to offset slightly so points aren't all coincident
+        const dir = [b[0] - anchorPos[0], b[1] - anchorPos[1], b[2] - anchorPos[2]];
+        const len = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+        // Small offset along the direction to prevent spline degeneracy
+        const offset = spread * len * t * 0.3;  // 30% of the way, spread by index
+        union.push({
+          type: 'ins',
+          coords: [
+            anchorPos[0] + dir[0] * t + dir[0] / len * offset * (1 - t),
+            anchorPos[1] + dir[1] * t + dir[1] / len * offset * (1 - t),
+            anchorPos[2] + dir[2] * t + dir[2] / len * offset * (1 - t)
+          ],
+          ss: ssT[i] || 'C',
+          hydro: (hyT[i] || 0) * f,
+          radiusScale: t,  // fade in
+          tgtIdx: i, srcIdx: -1
+        });
       }
     }
   }
-  // Pass 2: insertions grow from nearest paired neighbor's morphing position
-  for (let i = 0; i < tc.length; i++) {
-    if (isPaired[i]) continue;
-    const b = tc[i];
-    // find nearest paired residue (search outward)
-    let anchorPos = null;
-    for (let d = 1; d < tc.length; d++) {
-      if (i - d >= 0 && isPaired[i - d]) { anchorPos = out[i - d]; break; }
-      if (i + d < tc.length && isPaired[i + d]) { anchorPos = out[i + d]; break; }
-    }
-    if (anchorPos) {
-      out[i] = [anchorPos[0] + (b[0]-anchorPos[0]) * t,
-                anchorPos[1] + (b[1]-anchorPos[1]) * t,
-                anchorPos[2] + (b[2]-anchorPos[2]) * t];
-    } else {
-      // fallback: source centroid
-      const cx = sc.reduce((acc, p) => acc + p[0], 0) / sc.length;
-      const cy = sc.reduce((acc, p) => acc + p[1], 0) / sc.length;
-      const cz = sc.reduce((acc, p) => acc + p[2], 0) / sc.length;
-      out[i] = [cx + (b[0]-cx) * t,
-                cy + (b[1]-cy) * t,
-                cz + (b[2]-cz) * t];
+  
+  // Also handle trailing deletions (source-only residues after last paired target)
+  // This happens when source has a longer C-terminal tail
+  // Find the last paired source index
+  let lastPairedSrc = -1;
+  for (let i = 0; i < sc.length; i++) {
+    if (srcIsPaired[i]) lastPairedSrc = i;
+  }
+  // The last union entry should be the last paired residue
+  const lastUnion = union[union.length - 1];
+  if (lastUnion && lastUnion.type === 'paired') {
+    for (let sIdx = lastPairedSrc + 1; sIdx < sc.length; sIdx++) {
+      if (srcIsPaired[sIdx]) continue;
+      const a = sc[sIdx];
+      const anchorPos = lastUnion.coords;
+      const spread = (sIdx - lastPairedSrc - 1) / Math.max(1, sc.length - lastPairedSrc - 1);
+      const spreadTerm = spread * (1 - t) * t;
+      union.push({
+        type: 'del',
+        coords: [
+          a[0] * (1 - t) + anchorPos[0] * t + (a[0] - anchorPos[0]) * spreadTerm,
+          a[1] * (1 - t) + anchorPos[1] * t + (a[1] - anchorPos[1]) * spreadTerm,
+          a[2] * (1 - t) + anchorPos[2] * t + (a[2] - anchorPos[2]) * spreadTerm
+        ],
+        ss: ssS[sIdx] || 'C',
+        hydro: (hyS[sIdx] || 0) * (1 - f),
+        radiusScale: (1 - t),
+        tgtIdx: -1, srcIdx: sIdx
+      });
     }
   }
-  return out;
+  
+  // Handle leading deletions (source-only residues before first paired target)
+  // These should already be handled in the first iteration (anchorBefore = null)
+  
+  return union;
+}
+
+// Legacy buildMorphCoords for backward compatibility (returns just coords array)
+function buildMorphCoords(src, tgt, f, weights) {
+  const union = buildUnionMorph(src, tgt, f, weights);
+  return union.map(u => u.coords);
 }
 
 // ================= three.js scene =================
@@ -390,7 +537,8 @@ function addTube(coordsArr, hydro, ss) {
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const mat = new THREE.MeshPhongMaterial({vertexColors: true,
                                           shininess: 30,
-                                          specular: 0x222222});
+                                          specular: 0x222222,
+                                          side: THREE.DoubleSide});
   const mesh = new THREE.Mesh(geo, mat);
   structureGroup.add(mesh);
   activeTube = {mesh, curve, tubular, radial, ringSize, ss};
@@ -424,7 +572,7 @@ function smoothRadii(ss, nResidues) {
   return sm;
 }
 
-function updateTubeGeometry(coordsArr, ss) {
+function updateTubeGeometry(coordsArr, ss, radiusScale) {
   const t = activeTube;
   if (!t) return;
   const pts = [];
@@ -461,13 +609,21 @@ function updateTubeGeometry(coordsArr, ss) {
       }
     }
     v.crossVectors(N, B).normalize();
-    // Interpolated radius at this ring position
+    // Interpolated radius at this ring position, with optional per-residue
+    // radiusScale for fade in/out of insertions/deletions
     const fi = i * (nRes - 1);
     const ri = Math.floor(fi);
     const frac = fi - ri;
     const r0 = radii[Math.min(ri, nRes - 1)];
     const r1 = radii[Math.min(ri + 1, nRes - 1)];
-    const r = r0 + (r1 - r0) * frac;
+    let r = r0 + (r1 - r0) * frac;
+    if (radiusScale) {
+      const rs0 = radiusScale[Math.min(ri, nRes - 1)];
+      const rs1 = radiusScale[Math.min(ri + 1, nRes - 1)];
+      const rs = rs0 + (rs1 - rs0) * frac;
+      r *= rs;
+      if (r < 0.05) r = 0.05;  // minimum visible radius to avoid degenerate geometry
+    }
     for (let s = 0; s < t.ringSize; s++) {
       const theta = s / t.radial * Math.PI * 2;
       const cx = Math.cos(theta) * r;
@@ -617,12 +773,10 @@ function makeTextSprite(text, color) {
   return spr;
 }
 
-function updateTubeCoords(coordsArr) {
-  // v11: delegate to updateTubeGeometry which handles both position AND
-  // per-ring SS-based radius. We need the current SS string for radius.
+function updateTubeCoords(coordsArr, ss, radiusScale) {
   const t = activeTube;
   if (!t) return;
-  updateTubeGeometry(coordsArr, t.ss);
+  updateTubeGeometry(coordsArr, ss || t.ss, radiusScale);
 }
 
 // v11: helix ribbons and strand arrows are REMOVED. The single tube with
@@ -695,11 +849,15 @@ function startMorph(target) {
   // stability-masked morph: weights per target residue
   const weights = pairWeights(src, target);
   morphState = {src, target, t0: performance.now(), weights};
-  const c0 = buildMorphCoords(src, target, 0, weights);
-  // v11: only rebuild the tube (with variable-radius geometry) and
-  // terminus markers. No helix boxes / strand arrows to get out of sync.
+  // v14: use union-space morph (handles insertions + deletions)
+  const u0 = buildUnionMorph(src, target, 0, weights);
+  const c0 = u0.map(u => u.coords);
+  const ss0 = u0.map(u => u.ss).join('');
+  const hy0 = u0.map(u => u.hydro);
+  const rs0 = u0.map(u => u.radiusScale);
   clearGroup();
-  addTube(c0, src.hydro, src.ss);
+  addTube(c0, hy0, ss0);
+  updateTubeGeometry(c0, ss0, rs0);
   addTerminusMarkers(c0);
   morphTick();
 }
@@ -708,13 +866,13 @@ function morphTick() {
   if (!morphState) return;
   const {src, target, t0, weights} = morphState;
   const f = Math.min(1, (performance.now() - t0) / MORPH_MS);
-  const c = buildMorphCoords(src, target, f, weights);
-  // v11: smooth SS + color cross-fade while the chain moves
-  const ssK = morphSS(src.ss, target.ss, src, target, f, weights);
-  const hydroK = morphHydro(src.hydro, target.hydro, src, target, f,
-                            weights);
-  // Update tube geometry (position + SS-based radius) and colors together
-  updateTubeGeometry(c, ssK);
+  // v14: union-space morph with insertion/deletion fade
+  const union = buildUnionMorph(src, target, f, weights);
+  const c = union.map(u => u.coords);
+  const ssK = union.map(u => u.ss).join('');
+  const hydroK = union.map(u => u.hydro);
+  const rsK = union.map(u => u.radiusScale);
+  updateTubeGeometry(c, ssK, rsK);
   updateTubeColors(ssK, hydroK);
   // termini markers follow the morphing chain ends
   if (termMarkers.length >= 4 && c.length >= 2) {

@@ -6,6 +6,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v13: standard cartoon — round tube with variable thickness (helix thick,
+  strand medium, loop thin), smooth transitions at SS boundaries. No more
+  elliptical cross-sections. Clean PyMOL/VMD-style cartoon look.
   v12: parallel-transport frames fix oval/twisted helix ribbons; insertions
   grow from nearest paired neighbor (not global centroid) — no more
   "expanding from inner center" on distant species transitions.
@@ -13,9 +16,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 12
+version: 13
 ---
-# Interactive Evolution Viewer (v12)
+# Interactive Evolution Viewer (v13)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -28,6 +31,17 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v13
+
+- **Standard cartoon: round variable-thickness tube** — replaced the elliptical
+  cross-sections with a clean round tube whose thickness varies by SS class:
+  helices thick (2.2 Å radius), strands medium (1.6 Å), loops thin (0.7 Å).
+  This is the standard cartoon representation used by PyMOL, VMD, and ChimeraX.
+- **Smooth thickness transitions** — a 3-point moving average blends the radius
+  at SS boundaries (helix→loop, strand→coil) so there are no hard steps.
+- **Simplified SS legend** — shows three dots of decreasing size (thick=helix,
+  medium=strand, thin=loop) instead of shape indicators.
 
 ## What's new in v12
 

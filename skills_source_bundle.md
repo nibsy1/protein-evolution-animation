@@ -194,6 +194,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v13: standard cartoon — round tube with variable thickness (helix thick,
+  strand medium, loop thin), smooth transitions at SS boundaries. No more
+  elliptical cross-sections. Clean PyMOL/VMD-style cartoon look.
   v12: parallel-transport frames fix oval/twisted helix ribbons; insertions
   grow from nearest paired neighbor (not global centroid) — no more
   "expanding from inner center" on distant species transitions.
@@ -201,9 +204,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 12
+version: 13
 ---
-# Interactive Evolution Viewer (v12)
+# Interactive Evolution Viewer (v13)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -216,6 +219,17 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v13
+
+- **Standard cartoon: round variable-thickness tube** — replaced the elliptical
+  cross-sections with a clean round tube whose thickness varies by SS class:
+  helices thick (2.2 Å radius), strands medium (1.6 Å), loops thin (0.7 Å).
+  This is the standard cartoon representation used by PyMOL, VMD, and ChimeraX.
+- **Smooth thickness transitions** — a 3-point moving average blends the radius
+  at SS boundaries (helix→loop, strand→coil) so there are no hard steps.
+- **Simplified SS legend** — shows three dots of decreasing size (thick=helix,
+  medium=strand, thin=loop) instead of shape indicators.
 
 ## What's new in v12
 
@@ -305,7 +319,7 @@ Browser: WebGL.
 
 ```
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v12)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v13)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -313,9 +327,9 @@ Usage:
 Reads aligned.json (structure-aligner skill v2) and embeds:
   - an interactive phylogenetic tree (SVG) of the species, colored by
     lineage; clicking a species morphs the structure
-  - a Three.js ribbon-style 3D viewer (works from CA-only traces):
-    variable-radius tube with per-ring elliptical cross-sections
-    (helix wide/flat, strand wide, loop thin), rotatable/zoomable
+  - a Three.js cartoon-style 3D viewer (works from CA-only traces):
+    round tube with variable thickness (helix thick, strand medium,
+    loop thin), smooth transitions, rotatable/zoomable
   - per-residue PURE HYDRopathy coloring (blue hydrophilic -> white ->
     red hydrophobic), no SS-class tint
   - consistent MEDIUM lighting: hemisphere + directional lights attached
@@ -326,6 +340,9 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v13 STANDARD CARTOON: round tube with variable thickness (helix=2.2,
+    strand=1.6, loop=0.7 radius), smooth 3-point-averaged transitions at
+    SS boundaries. No elliptical cross-sections — clean PyMOL/VMD look.
   - v12 PARALLEL-TRANSPORT FRAMES + LOCAL INSERTION GROWTH: the tube's
     cross-section frame follows the curve via parallel transport (fixes
     oval/twisted helix ribbons), and insertions grow from the nearest
@@ -675,9 +692,9 @@ if __name__ == "__main__":
                     background:linear-gradient(90deg,#4aa3ff,#f5f5f5,#ff9d2e); }
   #sslegend { position:absolute; bottom:34px; left:16px; font-size:11px;
                color:#8b949e; z-index:5; pointer-events:none; }
-  #sslegend .swatch { display:inline-block; width:14px; height:6px;
-                      border-radius:2px; margin:0 4px 0 10px;
-                      vertical-align:middle; }
+  #sslegend .swatch { display:inline-block;
+                      border-radius:50%; margin:0 4px 0 10px;
+                      vertical-align:middle; background:#888; }
   #hint { color:#8b949e; font-size:11px; margin-top:10px;
           border-top:1px solid #21262d; padding-top:8px; }
   .edge { stroke:#30363d; stroke-width:1.4; }
@@ -706,9 +723,9 @@ if __name__ == "__main__":
       <span class="swatch" style="background:#d62728"></span>Angiosperms
     </div>
     <div id="sslegend">
-      <span class="swatch" style="background:#888;border-radius:3px;height:8px;width:18px"></span>helix
-      <span class="swatch" style="background:#888;border-radius:1px;height:5px;width:18px"></span>strand
-      <span class="swatch" style="background:#888;border-radius:50%;height:5px;width:5px"></span>loop
+      <span class="swatch" style="height:9px;width:9px"></span>helix
+      <span class="swatch" style="height:6px;width:6px"></span>strand
+      <span class="swatch" style="height:3px;width:3px"></span>loop
     </div>
     <div id="hydrobar">
       hydrophilic
@@ -1008,21 +1025,17 @@ function clearGroup() {
   }
 }
 
-// ---- ribbon tube: smooth CatmullRom tube through the CA trace ----
-// v11: variable radius — wide (flat ribbon look) over helices and strands,
-// thin over loops — matching the GIF's linewidth hierarchy (H=8.5, E=6.5,
-// C=2.2). The tube geometry uses a fixed radius, so we approximate the
-// variable width by building the tube with per-ring radius scaling in
-// updateTubeGeometry (called on every morph frame).
+// ---- cartoon tube: smooth CatmullRom tube through the CA trace ----
+// v13: standard cartoon — round tube with variable thickness.
+// Helices thick (2.2), strands medium (1.6), loops thin (0.7).
+// No elliptical cross-sections — clean round tube like PyMOL/VMD cartoon.
 let activeTube = null;
 function addTube(coordsArr, hydro, ss) {
   const pts = [];
   for (const c of coordsArr) pts.push(new THREE.Vector3(c[0], c[1], c[2]));
   const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
   const tubular = Math.min(2400, pts.length * 3);
-  const radial = 16;
-  // Start with a thin uniform tube; updateTubeGeometry will set the
-  // per-ring radius based on SS class.
+  const radial = 12;
   const geo = new THREE.TubeGeometry(curve, tubular, 1.0, radial, false);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
@@ -1043,19 +1056,34 @@ function addTube(coordsArr, hydro, ss) {
   const mesh = new THREE.Mesh(geo, mat);
   structureGroup.add(mesh);
   activeTube = {mesh, curve, tubular, radial, ringSize, ss};
-  // Apply SS-based variable radius immediately
   updateTubeGeometry(coordsArr, ss);
   return activeTube;
 }
 
-// v11: recompute the tube geometry with per-ring radius based on SS class.
-// Helices and strands get a wide flat ribbon (radius ~2.8 x 1.0, elliptical
-// cross-section); loops get a thin tube (radius ~0.8). This makes the
-// viewer's static structure look like the GIF's ribbon cartoon.
+// v13: per-residue cartoon radius — round tube, thickness varies by SS class.
+// H=2.2 (thick), E=1.6 (medium), C=0.7 (thin). Standard cartoon look.
 function ssRadius(st) {
-  if (st === 'H') return {w: 3.0, h: 1.0};   // wide flat ribbon
-  if (st === 'E') return {w: 2.4, h: 0.9};   // wide flat ribbon
-  return {w: 0.9, h: 0.9};                    // thin tube
+  if (st === 'H') return 2.2;
+  if (st === 'E') return 1.6;
+  return 0.7;
+}
+
+// Precompute smoothed per-residue radii with linear interpolation at SS
+// boundaries so the thickness transitions smoothly (no hard steps).
+function smoothRadii(ss, nResidues) {
+  const raw = new Array(nResidues);
+  for (let i = 0; i < nResidues; i++) {
+    raw[i] = ssRadius((ss && ss[i]) || 'C');
+  }
+  // Smooth: 3-point moving average to blend transitions
+  const sm = new Array(nResidues);
+  for (let i = 0; i < nResidues; i++) {
+    const a = raw[Math.max(0, i - 1)];
+    const b = raw[i];
+    const c = raw[Math.min(nResidues - 1, i + 1)];
+    sm[i] = (a + 2 * b + c) / 4;
+  }
+  return sm;
 }
 
 function updateTubeGeometry(coordsArr, ss) {
@@ -1065,16 +1093,15 @@ function updateTubeGeometry(coordsArr, ss) {
   for (const c of coordsArr) pts.push(new THREE.Vector3(c[0], c[1], c[2]));
   t.curve.points = pts;
   t.ss = ss;
+  const nRes = pts.length;
+  const radii = smoothRadii(ss, nRes);
+  t.radii = radii;
   const pos = t.mesh.geometry.attributes.position;
   const N = new THREE.Vector3();
   const P = new THREE.Vector3();
-  const Pprev = new THREE.Vector3();
-  // Parallel-transport frame: start with a reference normal, then rotate
-  // it along the curve to follow the local geometry. This keeps the
-  // ribbon's flat face consistently oriented (no twisting / oval artifacts).
+  // Simple frame: use Frenet-like approach with fallback
   let B = new THREE.Vector3();
   const v = new THREE.Vector3();
-  const tmp = new THREE.Vector3();
   const firstTangent = new THREE.Vector3();
   try { t.curve.getTangent(0, firstTangent); } catch (e) { firstTangent.set(0, 0, 1); }
   firstTangent.normalize();
@@ -1087,27 +1114,26 @@ function updateTubeGeometry(coordsArr, ss) {
     try { t.curve.getTangent(i, N); } catch (e) { N.copy(firstTangent); }
     N.normalize();
     if (ring > 0) {
-      // Parallel transport: project previous B onto plane perp to N
       const dotBN = B.dot(N);
       B.x -= dotBN * N.x; B.y -= dotBN * N.y; B.z -= dotBN * N.z;
       if (B.lengthSq() < 1e-6) {
-        // Degenerate: pick any perpendicular
         B.crossVectors(N, refUp).normalize();
       } else {
         B.normalize();
       }
     }
     v.crossVectors(N, B).normalize();
-    // SS class at this ring position
-    const resi = Math.min(pts.length - 1,
-                          Math.floor(i * (pts.length - 1)));
-    const st = (ss && ss[resi]) || 'C';
-    const rad = ssRadius(st);
+    // Interpolated radius at this ring position
+    const fi = i * (nRes - 1);
+    const ri = Math.floor(fi);
+    const frac = fi - ri;
+    const r0 = radii[Math.min(ri, nRes - 1)];
+    const r1 = radii[Math.min(ri + 1, nRes - 1)];
+    const r = r0 + (r1 - r0) * frac;
     for (let s = 0; s < t.ringSize; s++) {
       const theta = s / t.radial * Math.PI * 2;
-      // Elliptical cross-section: wide in B direction, thin in v direction
-      const cx = Math.cos(theta) * rad.w;
-      const cy = Math.sin(theta) * rad.h;
+      const cx = Math.cos(theta) * r;
+      const cy = Math.sin(theta) * r;
       const idx = ring * t.ringSize + s;
       if (idx >= pos.count) break;
       pos.setXYZ(idx,

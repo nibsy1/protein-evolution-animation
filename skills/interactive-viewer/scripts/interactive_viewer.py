@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v12)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v13)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -7,9 +7,9 @@ Usage:
 Reads aligned.json (structure-aligner skill v2) and embeds:
   - an interactive phylogenetic tree (SVG) of the species, colored by
     lineage; clicking a species morphs the structure
-  - a Three.js ribbon-style 3D viewer (works from CA-only traces):
-    variable-radius tube with per-ring elliptical cross-sections
-    (helix wide/flat, strand wide, loop thin), rotatable/zoomable
+  - a Three.js cartoon-style 3D viewer (works from CA-only traces):
+    round tube with variable thickness (helix thick, strand medium,
+    loop thin), smooth transitions, rotatable/zoomable
   - per-residue PURE HYDRopathy coloring (blue hydrophilic -> white ->
     red hydrophobic), no SS-class tint
   - consistent MEDIUM lighting: hemisphere + directional lights attached
@@ -20,6 +20,9 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v13 STANDARD CARTOON: round tube with variable thickness (helix=2.2,
+    strand=1.6, loop=0.7 radius), smooth 3-point-averaged transitions at
+    SS boundaries. No elliptical cross-sections — clean PyMOL/VMD look.
   - v12 PARALLEL-TRANSPORT FRAMES + LOCAL INSERTION GROWTH: the tube's
     cross-section frame follows the curve via parallel transport (fixes
     oval/twisted helix ribbons), and insertions grow from the nearest

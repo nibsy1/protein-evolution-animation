@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v14)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v16)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -20,6 +20,15 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v16 NATIVE SCROLL + RESIZE + RESIDUE HIGHLIGHT: sequence panel uses
+    native browser scrolling (all rows always visible), draggable resize
+    handle (60-600px), click individual amino acid -> 3D gold sphere+ring
+    highlight that persists across species switches (auto-removed if the
+    residue doesn't exist in the next structure).
+  - v15 SEQUENCE ALIGNMENT PANEL: MSA with BLOSUM62 similarity coloring
+    (red=dissimilar -> white -> green=identical), selected species row
+    highlighted with smooth cross-fade transition, click-to-select,
+    collapsible panel at bottom of viewer.
   - v14 UNION-SPACE MORPH + DoubleSide: handles both insertions AND
     deletions. Insertions fade in (radius 0->1), deletions collapse and
     fade out (1->0). DoubleSide material fixes "see inside tube" issue.

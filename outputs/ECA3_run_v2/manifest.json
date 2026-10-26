@@ -5,7 +5,7 @@
   "pipeline_versions": {
     "structure_aligner": "v3 (threaded-seq fix)",
     "morph_animation": "v4 (union-space morph: insertions fade in, deletions collapse+fade out, radius-scaled rendering)",
-    "interactive_viewer": "v15 (sequence alignment panel with BLOSUM62 similarity coloring, union-space morph, standard cartoon tube)"
+    "interactive_viewer": "v16 (native scroll, draggable panel resize, residue click->3D highlight, sequence alignment panel with BLOSUM62 similarity coloring, union-space morph, standard cartoon tube)"
   },
   "reference": "PWZ53365.1 (Zea mays)",
   "n_structures": 16,
@@ -43,8 +43,8 @@
       "sha256": "2395ce2b38338666"
     },
     "viewer.html": {
-      "bytes": 2126690,
-      "sha256": "3e8fca40f0ae7202"
+      "bytes": 2136917,
+      "sha256": "dd99a6b0de7e6ca8"
     }
   }
 }

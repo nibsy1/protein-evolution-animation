@@ -64,6 +64,7 @@ biopython, matplotlib, pillow, plus `src/proteinlib.py` from the workspace.
   produces no output.
 - For a fully automated agent (scheduled runs, retries, delivery),
   wrap this script in a Mistral workflow next.
+
 ```
 
 ## `evolution-pipeline/scripts/run_evolution_pipeline.py`
@@ -181,6 +182,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ```
 
 ## `interactive-viewer/SKILL.md`
@@ -194,6 +196,10 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v16: native scrolling (all rows always visible when scrolled), draggable
+  panel resize handle (60–600px), click individual amino acid → 3D gold
+  sphere+ring highlight that persists across species switches (auto-removed
+  if residue doesn't exist in next structure).
   v15: sequence alignment panel — MSA with BLOSUM62 similarity coloring
   (red=dissimilar, white=neutral, green=identical), selected species row
   highlighted with smooth transition, click-to-select, collapsible panel.
@@ -211,9 +217,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 15
+version: 16
 ---
-# Interactive Evolution Viewer (v15)
+# Interactive Evolution Viewer (v16)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -226,6 +232,27 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v16
+
+- **Native scrolling** — the sequence panel container uses native browser
+  `overflow:auto` scrolling (`scrollTop`/`scrollLeft`) instead of a manual
+  `scrollY` offset. All sequence rows are always active and visible when
+  scrolled into view — no more invisible rows that only appear on click.
+- **Adjustable panel height** — a drag handle (`#seqresize`, 6px bar at the
+  top of the sequence panel, `n-resize` cursor) lets the user resize the
+  panel between 60px and 600px. Dragging up shrinks, dragging down grows.
+  The 3D renderer and sequence canvas resize in real time.
+- **Residue click → 3D highlight** — clicking an individual amino acid in
+  the sequence panel places a pulsing gold sphere + camera-facing torus ring
+  at that residue's Cα position in the 3D structure. The highlight is added
+  to the scene root (not the structure group) so it persists during morphs.
+  When switching species, the highlight automatically follows to the
+  corresponding residue (mapped via `ref_pairs`); if the residue doesn't
+  exist in the new structure (insertion/deletion), the highlight is removed.
+  Clicking the same residue again deselects it. A gold selection box is
+  drawn behind the residue in every sequence row, with a vertical connector
+  line across all rows.
 
 ## What's new in v15
 
@@ -358,13 +385,14 @@ must sit side by side.
 
 Python 3.8+: requests, numpy, biopython, plus `src/proteinlib.py`.
 Browser: WebGL.
+
 ```
 
 ## `interactive-viewer/scripts/interactive_viewer.py`
 
 ```
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v15)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v16)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -385,6 +413,11 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v16 NATIVE SCROLL + RESIZE + RESIDUE HIGHLIGHT: sequence panel uses
+    native browser scrolling (all rows always visible), draggable resize
+    handle (60-600px), click individual amino acid -> 3D gold sphere+ring
+    highlight that persists across species switches (auto-removed if the
+    residue doesn't exist in the next structure).
   - v15 SEQUENCE ALIGNMENT PANEL: MSA with BLOSUM62 similarity coloring
     (red=dissimilar -> white -> green=identical), selected species row
     highlighted with smooth cross-fade transition, click-to-select,
@@ -948,6 +981,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ```
 
 ## `interactive-viewer/scripts/viewer_template.html`
@@ -971,17 +1005,29 @@ if __name__ == "__main__":
   #center { flex:1; position:relative; min-width:0; }
   #seqpanel { height:180px; border-top:1px solid #21262d;
               display:flex; flex-direction:column; overflow:hidden;
-              transition:height 0.3s ease; }
+              flex-shrink:0; }
   #seqpanel.collapsed { height:28px; }
   #seqheader { display:flex; align-items:center; justify-content:space-between;
                padding:4px 12px; font-size:11px; color:#8b949e;
                flex-shrink:0; cursor:pointer; user-select:none; }
   #seqheader .seqtitle { font-weight:600; color:#e6edf3; font-size:12px; }
   #seqheader .seqinfo { font-size:11px; }
+  #seqresize { position:absolute; top:-3px; left:0; right:0; height:6px;
+               cursor:n-resize; z-index:10; }
+  #seqresize:hover { background:rgba(88,166,255,0.2); }
   #seqcontainer { flex:1; overflow:auto; padding:0 12px 8px 12px;
                   font-family:monospace; font-size:11px; line-height:16px;
                   position:relative; }
   #seqcanvas { display:block; }
+  /* Selected residue highlight in sequence */
+  .seq-sel-marker { position:absolute; pointer-events:none;
+                    border:1px solid #f0c674; background:rgba(240,198,116,0.25);
+                    border-radius:2px; z-index:5; }
+  /* 3D residue highlight marker */
+  .residue-highlight-label { position:absolute; pointer-events:none;
+                    font-size:10px; color:#f0c674; background:rgba(13,17,23,0.85);
+                    padding:1px 5px; border-radius:3px; border:1px solid #f0c674;
+                    z-index:20; white-space:nowrap; }
   .seqrow { white-space:nowrap; }
   #seqpanel .simbar { position:absolute; bottom:0; left:12px; right:12px;
                       height:14px; font-size:9px; color:#8b949e;
@@ -1050,6 +1096,7 @@ if __name__ == "__main__":
     </div>
   </div>
   <div id="seqpanel">
+    <div id="seqresize" title="Drag to resize"></div>
     <div id="seqheader" onclick="toggleSeqPanel()">
       <span class="seqtitle">Sequence Alignment (vs. reference)</span>
       <span class="seqinfo" id="seqinfo"></span>
@@ -1488,6 +1535,15 @@ function resizeRenderer() { resize(); }
 function animateLoop() {
   requestAnimationFrame(animateLoop);
   controls.update();
+  // v16: Keep residue highlight ring facing the camera
+  if (window._residueRing && camera) {
+    window._residueRing.lookAt(camera.position);
+  }
+  // v16: Pulse the residue highlight sphere for visibility
+  if (window._residueHighlight) {
+    const pulse = 1 + 0.15 * Math.sin(performance.now() / 300);
+    window._residueHighlight.scale.set(pulse, pulse, pulse);
+  }
   renderer.render(scene, camera);
 }
 
@@ -1812,6 +1868,10 @@ function showStructure(st) {
                         controls.target.z + size * 0.9);
   }
   current = st;
+  // v16: Update residue highlight for initial structure
+  if (typeof updateResidueHighlight === 'function') {
+    updateResidueHighlight();
+  }
 }
 
 function selectSpecies(sp) {
@@ -1901,6 +1961,11 @@ function morphTick() {
       target.accession + ' · ' + target.source +
       (target.core_identity != null ? ' · core identity ' +
         Math.round(target.core_identity * 100) + '%' : '');
+    // v16: Update residue highlight for the new structure
+    // (residue may not exist in the new structure -> highlight removed)
+    if (typeof updateResidueHighlight === 'function') {
+      updateResidueHighlight();
+    }
   }
 }
 
@@ -1916,12 +1981,17 @@ let seqState = {
   scrollX: 0, scrollY: 0,
   charW: 7, charH: 16, labelW: 160, rowH: 18,
   selectedSpecies: null,
-  highlightAlpha: 0,  // 0 = no highlight, 1 = full highlight (for smooth transition)
+  highlightAlpha: 0,
   targetSpecies: null,
-  speciesOrder: [],   // species in display order (same as tree leaves)
-  colWidth: 0,        // total width of the alignment in pixels
+  speciesOrder: [],
+  colWidth: 0,
   nCols: 0,
   animating: false,
+  // v16: selected residue tracking (reference column index, null = none)
+  selectedRefCol: null,
+  // v16: per-species mapping from reference column -> structure residue index
+  // (null if that species doesn't have a residue at this reference position)
+  refColToResIdx: {},  // species -> array (refCol -> residueIdx or -1)
 };
 
 function initSeqPanel() {
@@ -1929,35 +1999,217 @@ function initSeqPanel() {
   seqCanvas = document.getElementById('seqcanvas');
   seqCtx = seqCanvas.getContext('2d');
   seqState.nCols = DATA.sequences.msaCols;
-  // Species order follows tree leaves
   seqState.speciesOrder = DATA.tree.leaves.slice();
-  // Set canvas size
+
+  // v16: Build refColToResIdx mapping for each species
+  // For each species, map each reference column to the structure residue index
+  // (or -1 if the species doesn't have a residue at this reference position)
+  buildRefColToResIdx();
+
   resizeSeqCanvas();
-  // Mouse wheel scrolling
   const container = document.getElementById('seqcontainer');
-  container.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    seqState.scrollX = Math.max(0, Math.min(
-      seqState.colWidth - container.clientWidth + 20,
-      seqState.scrollX + e.deltaY));
+
+  // v16: Use native scrolling (container has overflow:auto) instead of
+  // manual scrollY. This fixes rows staying invisible when scrolled.
+  container.addEventListener('scroll', () => {
+    seqState.scrollX = container.scrollLeft;
+    seqState.scrollY = container.scrollTop;
     drawSeqPanel();
+  });
+
+  // Mouse wheel: horizontal scroll with shift, vertical with plain wheel
+  container.addEventListener('wheel', (e) => {
+    if (!e.shiftKey) {
+      // Vertical scroll: let the browser handle it natively
+      return;
+    }
+    e.preventDefault();
+    container.scrollLeft += e.deltaY;
   }, {passive: false});
-  // Click on a row to select that species
+
+  // v16: Click handling — distinguish row click (select species) from
+  // residue click (select amino acid for 3D highlight)
   seqCanvas.addEventListener('click', (e) => {
     const rect = seqCanvas.getBoundingClientRect();
-    const y = e.clientY - rect.top + seqState.scrollY;
-    const rowIdx = Math.floor((y - 4) / seqState.rowH);
-    if (rowIdx >= 0 && rowIdx < seqState.speciesOrder.length) {
-      const sp = seqState.speciesOrder[rowIdx];
-      selectSpecies(sp);
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const rowIdx = Math.floor((y - 4 + seqState.scrollY) / seqState.rowH);
+    if (rowIdx < 0 || rowIdx >= seqState.speciesOrder.length) return;
+    const sp = seqState.speciesOrder[rowIdx];
+
+    // Check if click is on a residue (right of label area)
+    const colX = x + seqState.scrollX - seqState.labelW;
+    if (colX >= 0) {
+      const col = Math.floor(colX / seqState.charW);
+      if (col >= 0 && col < seqState.nCols) {
+        // Click on a residue: check if it's a reference column
+        const refCol = msaColToRefCol(col);
+        if (refCol !== null) {
+          // Toggle residue selection
+          if (seqState.selectedRefCol === refCol) {
+            seqState.selectedRefCol = null;
+          } else {
+            seqState.selectedRefCol = refCol;
+          }
+          drawSeqPanel();
+          updateResidueHighlight();
+          scrollToSelectedResidue();  // center the selected column
+          return;
+        }
+      }
     }
+    // Otherwise: select species
+    selectSpecies(sp);
   });
+
+  // v16: Draggable resize handle
+  initSeqResize();
+
   // Resize handler
   window.addEventListener('resize', () => {
     resizeSeqCanvas();
     drawSeqPanel();
   });
   drawSeqPanel();
+}
+
+// v16: Map MSA column index -> reference column index (or null if insertion column)
+function msaColToRefCol(msaCol) {
+  const refColMap = DATA.sequences.refColMap;
+  if (!refColMap) return null;
+  // refColMap[refIdx] = msaCol, so we need the inverse
+  // Build inverse lazily
+  if (!seqState._refColInverse) {
+    seqState._refColInverse = {};
+    for (let ri = 0; ri < refColMap.length; ri++) {
+      seqState._refColInverse[refColMap[ri]] = ri;
+    }
+  }
+  return seqState._refColInverse[msaCol] !== undefined ? seqState._refColInverse[msaCol] : null;
+}
+
+// v16: Build mapping from reference column -> structure residue index for each species
+// This uses the ref_pairs data: ref_pairs[seq_idx] = ref_idx
+// So for each species, we invert: ref_idx -> seq_idx (structure residue index)
+function buildRefColToResIdx() {
+  const refColMap = DATA.sequences.refColMap;
+  if (!refColMap) return;
+  for (const st of DATA.structures) {
+    const sp = st.species;
+    const nRefCols = refColMap.length;
+    const mapping = new Array(nRefCols).fill(-1);
+    // ref_pairs: [[seq_idx, ref_idx], ...]
+    // For the reference structure, ref_pairs is identity: [[i, i], ...]
+    if (st.ref_pairs) {
+      for (const [seqIdx, refIdx] of st.ref_pairs) {
+        if (refIdx >= 0 && refIdx < nRefCols) {
+          mapping[refIdx] = seqIdx;
+        }
+      }
+    }
+    seqState.refColToResIdx[sp] = mapping;
+  }
+}
+
+// v16: Get the structure residue index for the selected reference column
+// in the currently displayed species. Returns -1 if not present.
+function getSelectedResidueIdx(species) {
+  if (seqState.selectedRefCol === null) return -1;
+  const mapping = seqState.refColToResIdx[species];
+  if (!mapping) return -1;
+  return mapping[seqState.selectedRefCol];
+}
+
+// v16: Update the 3D residue highlight marker
+function updateResidueHighlight() {
+  // Remove existing highlight
+  if (window._residueHighlight) {
+    window._residueHighlight.remove();
+    window._residueHighlight = null;
+  }
+  if (!current || seqState.selectedRefCol === null) return;
+  const resIdx = getSelectedResidueIdx(current.species);
+  if (resIdx < 0) return;  // residue doesn't exist in this structure
+  const coords = coordsOf(current);
+  if (resIdx >= coords.length) return;
+  const p = coords[resIdx];
+
+  // Create a highlight sphere at the residue position
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(3.5, 16, 12),
+    new THREE.MeshPhongMaterial({
+      color: 0xf0c674, emissive: 0xf0c674, emissiveIntensity: 0.5,
+      transparent: true, opacity: 0.7
+    })
+  );
+  sphere.position.set(p[0], p[1], p[2]);
+  // Add to the scene (not the structure group, so it persists during morphs)
+  scene.add(sphere);
+  window._residueHighlight = sphere;
+
+  // Add a ring around the residue
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(5.0, 0.4, 8, 24),
+    new THREE.MeshPhongMaterial({
+      color: 0xf0c674, emissive: 0xf0c674, emissiveIntensity: 0.3
+    })
+  );
+  ring.position.set(p[0], p[1], p[2]);
+  // Orient ring to face camera (will be updated in animate loop)
+  ring.userData.isResidueRing = true;
+  scene.add(ring);
+  window._residueRing = ring;
+
+  // Update sequence panel info
+  const refAA = DATA.sequences.data[DATA.referenceSpecies].aln[
+    DATA.sequences.refColMap[seqState.selectedRefCol]];
+  const info = document.getElementById('seqinfo');
+  if (info) {
+    const curAA = DATA.sequences.data[current.species].aln[
+      findMsaColForSpecies(current.species, seqState.selectedRefCol)];
+    info.textContent = 'Ref pos ' + (seqState.selectedRefCol + 1) + ' (' + refAA +
+      ' → ' + (curAA || '-') + ' in ' + current.species + ')';
+  }
+}
+
+// v16: Find the MSA column for a given reference column in a species
+function findMsaColForSpecies(species, refCol) {
+  const refColMap = DATA.sequences.refColMap;
+  if (!refColMap || refCol < 0 || refCol >= refColMap.length) return -1;
+  return refColMap[refCol];
+}
+
+// v16: Draggable resize handle for sequence panel
+function initSeqResize() {
+  const handle = document.getElementById('seqresize');
+  const panel = document.getElementById('seqpanel');
+  if (!handle || !panel) return;
+  let startY = 0, startH = 0;
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startY = e.clientY;
+    startH = panel.offsetHeight;
+    document.body.style.cursor = 'n-resize';
+    document.body.style.userSelect = 'none';
+    function onMove(ev) {
+      const dy = startY - ev.clientY;  // drag up = increase height
+      const newH = Math.max(60, Math.min(600, startH + dy));
+      panel.style.height = newH + 'px';
+      panel.classList.remove('collapsed');
+      document.getElementById('seqtoggle').innerHTML = '&#9660;';
+      resizeSeqCanvas();
+      if (typeof resizeRenderer === 'function') resizeRenderer();
+      drawSeqPanel();
+    }
+    function onUp() {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 }
 
 function resizeSeqCanvas() {
@@ -2069,14 +2321,45 @@ function drawSeqPanel() {
     for (let ci = startCol; ci < endCol; ci++) {
       const aa = aln[ci];
       const x = lw + ci * cw - scrollX;
+      // v16: Check if this is the selected residue column (reference column)
+      const refCol = msaColToRefCol(ci);
+      const isSelectedRes = (refCol !== null && refCol === S.selectedRefCol);
+      if (isSelectedRes) {
+        // Draw selection box behind the residue
+        ctx.fillStyle = 'rgba(240, 198, 116, 0.3)';
+        ctx.fillRect(x - 1, y, cw + 1, rh);
+        ctx.strokeStyle = '#f0c674';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x - 1, y, cw + 1, rh);
+      }
       if (aa === '-') {
         // Gap: draw a faint dash
-        ctx.fillStyle = '#21262d';
+        ctx.fillStyle = isSelectedRes ? '#f0c674' : '#21262d';
         ctx.fillText('-', x, y + rh / 2);
       } else {
         const s = sim[ci];
-        ctx.fillStyle = simToColor(s);
+        ctx.fillStyle = isSelectedRes ? '#f0c674' : simToColor(s);
         ctx.fillText(aa, x, y + rh / 2);
+      }
+    }
+    
+    // v16: Draw a vertical line connecting the selected residue across all rows
+    // (drawn after all rows so it's on top)
+  }
+
+  // v16: Draw vertical connector line for selected residue across all species rows
+  if (S.selectedRefCol !== null) {
+    const refColMap = DATA.sequences.refColMap;
+    const msaCol = refColMap[S.selectedRefCol];
+    if (msaCol !== undefined) {
+      const x = lw + msaCol * cw - scrollX;
+      if (x >= lw - scrollX && x <= scrollX + visW) {
+        ctx.strokeStyle = 'rgba(240, 198, 116, 0.15)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + cw / 2, 4 - scrollY);
+        ctx.lineTo(x + cw / 2, 4 + nRows * rh - scrollY);
+        ctx.stroke();
       }
     }
   }
@@ -2097,9 +2380,11 @@ function drawSeqPanel() {
 
   // Update info text
   const info = document.getElementById('seqinfo');
-  if (info && S.selectedSpecies) {
-    const ident = DATA.sequences.identity[S.selectedSpecies] || 0;
-    info.textContent = S.selectedSpecies + ' \u00b7 ' + Math.round(ident * 100) + '% identity to reference';
+  if (info) {
+    if (S.selectedRefCol === null && S.selectedSpecies) {
+      const ident = DATA.sequences.identity[S.selectedSpecies] || 0;
+      info.textContent = S.selectedSpecies + ' \u00b7 ' + Math.round(ident * 100) + '% identity to reference';
+    }
   }
 }
 
@@ -2138,10 +2423,25 @@ function scrollToSelectedRow() {
   const ri = S.speciesOrder.indexOf(S.selectedSpecies);
   if (ri < 0) return;
   const container = document.getElementById('seqcontainer');
+  // v16: Use native scrollTop (container has overflow:auto)
   const rowY = 4 + ri * S.rowH;
   const targetScroll = Math.max(0, rowY - container.clientHeight / 2);
+  container.scrollTop = targetScroll;
   S.scrollY = targetScroll;
-  container.scrollTop = 0;  // we handle scrolling manually via canvas
+  drawSeqPanel();
+}
+
+// v16: Scroll sequence panel to show the selected residue column
+function scrollToSelectedResidue() {
+  const S = seqState;
+  if (S.selectedRefCol === null) return;
+  const refColMap = DATA.sequences.refColMap;
+  if (!refColMap || S.selectedRefCol >= refColMap.length) return;
+  const msaCol = refColMap[S.selectedRefCol];
+  const container = document.getElementById('seqcontainer');
+  const targetX = S.labelW + msaCol * S.charW - container.clientWidth / 2;
+  container.scrollLeft = Math.max(0, targetX);
+  S.scrollX = container.scrollLeft;
   drawSeqPanel();
 }
 
@@ -2161,6 +2461,7 @@ if (DATA.sequences) {
 </script>
 </body>
 </html>
+
 ```
 
 ## `morph-animation/SKILL.md`
@@ -2265,6 +2566,7 @@ python scripts/morph_animation.py structures/aligned.json -o evolution.gif --hol
 
 Python 3.8+, `numpy`, `biopython`, `matplotlib`, `pillow`, plus
 `src/proteinlib.py` from the workspace.
+
 ```
 
 ## `morph-animation/scripts/morph_animation.py`
@@ -2773,6 +3075,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ```
 
 ## `sequence-scraper/SKILL.md`
@@ -2847,6 +3150,7 @@ query | exact | homolog | broad | uniprot | genus_fill | related/fallback | miss
 ## Dependencies
 
 Python 3.8+, `requests`.
+
 ```
 
 ## `sequence-scraper/scripts/scrape_sequences.py`
@@ -3443,6 +3747,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ```
 
 ## `structure-aligner/SKILL.md`
@@ -3540,6 +3845,7 @@ python scripts/fetch_and_align_structures.py sequences.fasta -o structures/ --em
 Python 3.8+, `requests`, `numpy`, `biopython`, `matplotlib` (overlay only),
 plus `src/proteinlib.py` from the workspace (the script finds it relative to
 the skills tree or on PYTHONPATH).
+
 ```
 
 ## `structure-aligner/scripts/fetch_and_align_structures.py`
@@ -4087,4 +4393,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ```

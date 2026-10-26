@@ -6,6 +6,10 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v16: native scrolling (all rows always visible when scrolled), draggable
+  panel resize handle (60–600px), click individual amino acid → 3D gold
+  sphere+ring highlight that persists across species switches (auto-removed
+  if residue doesn't exist in next structure).
   v15: sequence alignment panel — MSA with BLOSUM62 similarity coloring
   (red=dissimilar, white=neutral, green=identical), selected species row
   highlighted with smooth transition, click-to-select, collapsible panel.
@@ -23,9 +27,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 15
+version: 16
 ---
-# Interactive Evolution Viewer (v15)
+# Interactive Evolution Viewer (v16)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -38,6 +42,27 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v16
+
+- **Native scrolling** — the sequence panel container uses native browser
+  `overflow:auto` scrolling (`scrollTop`/`scrollLeft`) instead of a manual
+  `scrollY` offset. All sequence rows are always active and visible when
+  scrolled into view — no more invisible rows that only appear on click.
+- **Adjustable panel height** — a drag handle (`#seqresize`, 6px bar at the
+  top of the sequence panel, `n-resize` cursor) lets the user resize the
+  panel between 60px and 600px. Dragging up shrinks, dragging down grows.
+  The 3D renderer and sequence canvas resize in real time.
+- **Residue click → 3D highlight** — clicking an individual amino acid in
+  the sequence panel places a pulsing gold sphere + camera-facing torus ring
+  at that residue's Cα position in the 3D structure. The highlight is added
+  to the scene root (not the structure group) so it persists during morphs.
+  When switching species, the highlight automatically follows to the
+  corresponding residue (mapped via `ref_pairs`); if the residue doesn't
+  exist in the new structure (insertion/deletion), the highlight is removed.
+  Clicking the same residue again deselects it. A gold selection box is
+  drawn behind the residue in every sequence row, with a vertical connector
+  line across all rows.
 
 ## What's new in v15
 

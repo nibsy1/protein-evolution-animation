@@ -9,10 +9,31 @@
   html, body { margin:0; padding:0; height:100%; background:#0d1117;
               color:#e6edf3; font-family:system-ui, sans-serif;
               overflow:hidden; }
-  #app { display:flex; height:100%; }
-  #left { width:33%; min-width:300px; padding:14px; overflow:auto;
+  #app { display:flex; flex-direction:column; height:100%; }
+  #toprow { display:flex; flex:1; min-height:0; }
+  #left { width:280px; min-width:240px; padding:14px; overflow:auto;
           border-right:1px solid #21262d; }
-  #right { flex:1; position:relative; }
+  #center { flex:1; position:relative; min-width:0; }
+  #seqpanel { height:180px; border-top:1px solid #21262d;
+              display:flex; flex-direction:column; overflow:hidden;
+              transition:height 0.3s ease; }
+  #seqpanel.collapsed { height:28px; }
+  #seqheader { display:flex; align-items:center; justify-content:space-between;
+               padding:4px 12px; font-size:11px; color:#8b949e;
+               flex-shrink:0; cursor:pointer; user-select:none; }
+  #seqheader .seqtitle { font-weight:600; color:#e6edf3; font-size:12px; }
+  #seqheader .seqinfo { font-size:11px; }
+  #seqcontainer { flex:1; overflow:auto; padding:0 12px 8px 12px;
+                  font-family:monospace; font-size:11px; line-height:16px;
+                  position:relative; }
+  #seqcanvas { display:block; }
+  .seqrow { white-space:nowrap; }
+  #seqpanel .simbar { position:absolute; bottom:0; left:12px; right:12px;
+                      height:14px; font-size:9px; color:#8b949e;
+                      display:flex; align-items:center; gap:6px;
+                      pointer-events:none; }
+  #seqpanel .simbar .grad { flex:1; height:6px; border-radius:2px;
+                    background:linear-gradient(90deg,#d73a49,#e6edf3,#3fb950); }
   #paneltitle { font-size:15px; font-weight:700; margin-bottom:6px;
                 color:#e6edf3; }
   #sname { font-size:17px; font-weight:600; color:#e6edf3; }
@@ -40,35 +61,47 @@
 </head>
 <body>
 <div id="app">
-  <div id="left">
-    <div id="paneltitle">__TITLE__</div>
-    <div id="tree"></div>
-    <div id="hint">Click a species to morph the structure.
-      Drag in the 3D window to rotate, scroll to zoom,
-      right-drag to pan.</div>
+  <div id="toprow">
+    <div id="left">
+      <div id="paneltitle">__TITLE__</div>
+      <div id="tree"></div>
+      <div id="hint">Click a species to morph the structure.
+        Drag in the 3D window to rotate, scroll to zoom,
+        right-drag to pan.</div>
+    </div>
+    <div id="center">
+      <div id="titlebar">
+        <div id="sname"></div>
+        <div id="ssub"></div>
+      </div>
+      <div id="stage" style="width:100%;height:100%"></div>
+      <div id="legend">
+        <span class="swatch" style="background:#2ca02c"></span>Green algae
+        <span class="swatch" style="background:#8c564b"></span>Bryophytes
+        <span class="swatch" style="background:#ff7f0e"></span>Ferns
+        <span class="swatch" style="background:#9467bd"></span>Gymnosperms
+        <span class="swatch" style="background:#d62728"></span>Angiosperms
+      </div>
+      <div id="sslegend">
+        <span class="swatch" style="height:9px;width:9px"></span>helix
+        <span class="swatch" style="height:6px;width:6px"></span>strand
+        <span class="swatch" style="height:3px;width:3px"></span>loop
+      </div>
+      <div id="hydrobar">
+        hydrophilic
+        <span class="grad"></span>
+        hydrophobic
+      </div>
+    </div>
   </div>
-  <div id="right">
-    <div id="titlebar">
-      <div id="sname"></div>
-      <div id="ssub"></div>
+  <div id="seqpanel">
+    <div id="seqheader" onclick="toggleSeqPanel()">
+      <span class="seqtitle">Sequence Alignment (vs. reference)</span>
+      <span class="seqinfo" id="seqinfo"></span>
+      <span id="seqtoggle">&#9660;</span>
     </div>
-    <div id="stage" style="width:100%;height:100%"></div>
-    <div id="legend">
-      <span class="swatch" style="background:#2ca02c"></span>Green algae
-      <span class="swatch" style="background:#8c564b"></span>Bryophytes
-      <span class="swatch" style="background:#ff7f0e"></span>Ferns
-      <span class="swatch" style="background:#9467bd"></span>Gymnosperms
-      <span class="swatch" style="background:#d62728"></span>Angiosperms
-    </div>
-    <div id="sslegend">
-      <span class="swatch" style="height:9px;width:9px"></span>helix
-      <span class="swatch" style="height:6px;width:6px"></span>strand
-      <span class="swatch" style="height:3px;width:3px"></span>loop
-    </div>
-    <div id="hydrobar">
-      hydrophilic
-      <span class="grad"></span>
-      hydrophobic
+    <div id="seqcontainer">
+      <canvas id="seqcanvas"></canvas>
     </div>
   </div>
 </div>
@@ -494,6 +527,9 @@ function resize() {
   renderer.setSize(w, h);
 }
 
+// Alias for external callers (e.g., sequence panel toggle)
+function resizeRenderer() { resize(); }
+
 function animateLoop() {
   requestAnimationFrame(animateLoop);
   controls.update();
@@ -838,6 +874,10 @@ function selectSpecies(sp) {
     entry.t.setAttribute('font-weight', '700');
     window.__selected = entry.t;
   }
+  // v15: transition sequence panel highlight
+  if (DATA.sequences && typeof transitionSeqHighlight === 'function') {
+    transitionSeqHighlight(sp);
+  }
 }
 
 // v10: morph duration ~1 second, time-eased (smoothstep) so the motion
@@ -909,12 +949,260 @@ function morphTick() {
   }
 }
 
+// ================= sequence alignment panel (v15) =================
+// Renders a multiple sequence alignment as a canvas. Each row is one species.
+// Residues are colored by BLOSUM62 similarity to the reference (red=dissimilar,
+// white=neutral, green=similar/identical). The selected species' row is
+// highlighted with a border and brought into view. Smooth transition when
+// switching species.
+
+let seqCanvas, seqCtx;
+let seqState = {
+  scrollX: 0, scrollY: 0,
+  charW: 7, charH: 16, labelW: 160, rowH: 18,
+  selectedSpecies: null,
+  highlightAlpha: 0,  // 0 = no highlight, 1 = full highlight (for smooth transition)
+  targetSpecies: null,
+  speciesOrder: [],   // species in display order (same as tree leaves)
+  colWidth: 0,        // total width of the alignment in pixels
+  nCols: 0,
+  animating: false,
+};
+
+function initSeqPanel() {
+  if (!DATA.sequences) return;
+  seqCanvas = document.getElementById('seqcanvas');
+  seqCtx = seqCanvas.getContext('2d');
+  seqState.nCols = DATA.sequences.msaCols;
+  // Species order follows tree leaves
+  seqState.speciesOrder = DATA.tree.leaves.slice();
+  // Set canvas size
+  resizeSeqCanvas();
+  // Mouse wheel scrolling
+  const container = document.getElementById('seqcontainer');
+  container.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    seqState.scrollX = Math.max(0, Math.min(
+      seqState.colWidth - container.clientWidth + 20,
+      seqState.scrollX + e.deltaY));
+    drawSeqPanel();
+  }, {passive: false});
+  // Click on a row to select that species
+  seqCanvas.addEventListener('click', (e) => {
+    const rect = seqCanvas.getBoundingClientRect();
+    const y = e.clientY - rect.top + seqState.scrollY;
+    const rowIdx = Math.floor((y - 4) / seqState.rowH);
+    if (rowIdx >= 0 && rowIdx < seqState.speciesOrder.length) {
+      const sp = seqState.speciesOrder[rowIdx];
+      selectSpecies(sp);
+    }
+  });
+  // Resize handler
+  window.addEventListener('resize', () => {
+    resizeSeqCanvas();
+    drawSeqPanel();
+  });
+  drawSeqPanel();
+}
+
+function resizeSeqCanvas() {
+  if (!seqCanvas || !DATA.sequences) return;
+  const container = document.getElementById('seqcontainer');
+  const dpr = window.devicePixelRatio || 1;
+  const w = container.clientWidth;
+  const nRows = seqState.speciesOrder.length;
+  seqState.colWidth = seqState.labelW + seqState.nCols * seqState.charW + 20;
+  const h = nRows * seqState.rowH + 8;
+  seqCanvas.width = seqState.colWidth * dpr;
+  seqCanvas.height = h * dpr;
+  seqCanvas.style.width = seqState.colWidth + 'px';
+  seqCanvas.style.height = h + 'px';
+  seqCtx.scale(dpr, dpr);
+}
+
+function toggleSeqPanel() {
+  const panel = document.getElementById('seqpanel');
+  const toggle = document.getElementById('seqtoggle');
+  panel.classList.toggle('collapsed');
+  toggle.innerHTML = panel.classList.contains('collapsed') ? '&#9650;' : '&#9660;';
+  // Resize 3D renderer after panel toggle
+  setTimeout(() => {
+    if (typeof resizeRenderer === 'function') resizeRenderer();
+  }, 320);
+}
+
+// BLOSUM62 similarity to color: red (dissimilar) -> white (neutral) -> green (similar)
+function simToColor(sim) {
+  // sim in [0, 1]: 0 = very dissimilar, 1 = identical
+  if (sim === null || sim === undefined) return '#30363d';  // gap
+  let r, g, b;
+  if (sim < 0.5) {
+    // red to white
+    const u = sim / 0.5;
+    r = 215 + (230 - 215) * u;
+    g = 58 + (237 - 58) * u;
+    b = 73 + (243 - 73) * u;
+  } else {
+    // white to green
+    const u = (sim - 0.5) / 0.5;
+    r = 230 + (63 - 230) * u;
+    g = 237 + (185 - 237) * u;
+    b = 243 + (80 - 243) * u;
+  }
+  return 'rgb(' + Math.round(r) + ',' + Math.round(g) + ',' + Math.round(b) + ')';
+}
+
+function drawSeqPanel() {
+  if (!seqCtx || !DATA.sequences) return;
+  const ctx = seqCtx;
+  const S = seqState;
+  const cw = S.charW, ch = S.charH, lw = S.labelW, rh = S.rowH;
+  const nRows = S.speciesOrder.length;
+  const totalH = nRows * rh + 8;
+
+  // Clear
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, S.colWidth, totalH);
+
+  const scrollX = S.scrollX;
+  const scrollY = S.scrollY;
+  const container = document.getElementById('seqcontainer');
+  const visW = container.clientWidth;
+
+  // Draw each row
+  for (let ri = 0; ri < nRows; ri++) {
+    const sp = S.speciesOrder[ri];
+    const seqData = DATA.sequences.data[sp];
+    if (!seqData) continue;
+    const aln = seqData.aln;
+    const sim = seqData.sim;
+    const y = 4 + ri * rh - scrollY;
+    if (y + rh < 0 || y > container.clientHeight) continue;  // off-screen
+
+    const isSelected = (sp === S.selectedSpecies);
+    const isAnimating = (sp === S.targetSpecies && S.animating);
+    const identity = DATA.sequences.identity[sp] || 0;
+
+    // Row background highlight (smooth transition)
+    let highlightAlpha = 0;
+    if (isSelected) highlightAlpha = S.highlightAlpha;
+    else if (isAnimating) highlightAlpha = 1 - S.highlightAlpha;
+    if (highlightAlpha > 0.01) {
+      ctx.fillStyle = 'rgba(88, 166, 255, ' + (highlightAlpha * 0.15) + ')';
+      ctx.fillRect(0, y, S.colWidth, rh);
+      // Left border accent
+      ctx.fillStyle = 'rgba(88, 166, 255, ' + (highlightAlpha * 0.8) + ')';
+      ctx.fillRect(0, y, 3, rh);
+    }
+
+    // Species label
+    ctx.fillStyle = isSelected ? '#58a6ff' : '#8b949e';
+    ctx.font = (isSelected ? 'bold ' : '') + '11px monospace';
+    ctx.textBaseline = 'middle';
+    const label = sp.length > 22 ? sp.substring(0, 21) + '\u2026' : sp;
+    ctx.fillText(label, 6, y + rh / 2);
+    // Identity percentage
+    ctx.fillStyle = isSelected ? '#58a6ff' : '#484f58';
+    ctx.font = '9px monospace';
+    ctx.fillText(Math.round(identity * 100) + '%', lw - 40, y + rh / 2);
+
+    // Sequence characters (only visible columns)
+    const startCol = Math.max(0, Math.floor((scrollX - lw) / cw));
+    const endCol = Math.min(S.nCols, Math.ceil((scrollX + visW - lw) / cw));
+    ctx.font = '11px monospace';
+    ctx.textBaseline = 'middle';
+    for (let ci = startCol; ci < endCol; ci++) {
+      const aa = aln[ci];
+      const x = lw + ci * cw - scrollX;
+      if (aa === '-') {
+        // Gap: draw a faint dash
+        ctx.fillStyle = '#21262d';
+        ctx.fillText('-', x, y + rh / 2);
+      } else {
+        const s = sim[ci];
+        ctx.fillStyle = simToColor(s);
+        ctx.fillText(aa, x, y + rh / 2);
+      }
+    }
+  }
+
+  // Position ruler at top
+  ctx.fillStyle = '#484f58';
+  ctx.font = '9px monospace';
+  ctx.textBaseline = 'middle';
+  const rulerY = -scrollY + 2;
+  if (rulerY > -10 && rulerY < 20) {
+    const startCol = Math.max(0, Math.floor((scrollX - lw) / cw));
+    const endCol = Math.min(S.nCols, Math.ceil((scrollX + visW - lw) / cw));
+    for (let ci = startCol; ci < endCol; ci += 50) {
+      const x = lw + ci * cw - scrollX;
+      ctx.fillText(String(ci + 1), x, rulerY);
+    }
+  }
+
+  // Update info text
+  const info = document.getElementById('seqinfo');
+  if (info && S.selectedSpecies) {
+    const ident = DATA.sequences.identity[S.selectedSpecies] || 0;
+    info.textContent = S.selectedSpecies + ' \u00b7 ' + Math.round(ident * 100) + '% identity to reference';
+  }
+}
+
+// Smooth transition: animate highlight from old species to new species
+function transitionSeqHighlight(newSpecies) {
+  const S = seqState;
+  if (S.selectedSpecies === newSpecies) return;
+  S.targetSpecies = newSpecies;
+  S.animating = true;
+  S.highlightAlpha = 0;
+  const startTime = performance.now();
+  const duration = 400;  // ms
+
+  function animStep() {
+    const f = Math.min(1, (performance.now() - startTime) / duration);
+    S.highlightAlpha = f;  // 0 -> 1 (old fades out, new fades in)
+    drawSeqPanel();
+    if (f < 1) {
+      requestAnimationFrame(animStep);
+    } else {
+      S.selectedSpecies = newSpecies;
+      S.targetSpecies = null;
+      S.animating = false;
+      S.highlightAlpha = 1;
+      drawSeqPanel();
+      // Scroll to bring selected row into view
+      scrollToSelectedRow();
+    }
+  }
+  animStep();
+}
+
+function scrollToSelectedRow() {
+  const S = seqState;
+  if (!S.selectedSpecies) return;
+  const ri = S.speciesOrder.indexOf(S.selectedSpecies);
+  if (ri < 0) return;
+  const container = document.getElementById('seqcontainer');
+  const rowY = 4 + ri * S.rowH;
+  const targetScroll = Math.max(0, rowY - container.clientHeight / 2);
+  S.scrollY = targetScroll;
+  container.scrollTop = 0;  // we handle scrolling manually via canvas
+  drawSeqPanel();
+}
+
 // ================= boot =================
 renderTree();
 init3D();
+initSeqPanel();
 const init = DATA.structures.find(s => s.accession === DATA.reference) ||
              DATA.structures[0];
 selectSpecies(init.species);
+// Set initial sequence panel selection
+if (DATA.sequences) {
+  seqState.selectedSpecies = init.species;
+  seqState.highlightAlpha = 1;
+  drawSeqPanel();
+}
 </script>
 </body>
 </html>

@@ -194,6 +194,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v15: sequence alignment panel — MSA with BLOSUM62 similarity coloring
+  (red=dissimilar, white=neutral, green=identical), selected species row
+  highlighted with smooth transition, click-to-select, collapsible panel.
   v14: union-space morph handles both insertions AND deletions. Insertions
   fade in (radius scales 0→1), deletions collapse and fade out (1→0).
   DoubleSide material fixes "see inside tube" issue. No more clumped
@@ -208,9 +211,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 14
+version: 15
 ---
-# Interactive Evolution Viewer (v14)
+# Interactive Evolution Viewer (v15)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -223,6 +226,27 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v15
+
+- **Sequence alignment panel** — a third panel at the bottom shows a multiple
+  sequence alignment (MSA) of all species, anchored to the reference sequence.
+  The reference row has no gaps; insertions from other species appear as
+  extra columns between reference columns.
+- **BLOSUM62 similarity coloring** — each residue is colored by its BLOSUM62
+  substitution score relative to the reference residue at the same column,
+  normalized by the reference residue's self-score. Color scale:
+  red (dissimilar, e.g. charged vs hydrophobic) → white (neutral) →
+  green (identical/similar, e.g. D↔E both acidic, K↔R both basic).
+- **Selected species highlight** — the selected species' row is highlighted
+  with a blue background and left accent border. Switching species triggers
+  a smooth 400ms cross-fade transition between the old and new highlights.
+- **Identity percentage** — each row shows the overall BLOSUM62-normalized
+  identity to the reference, making it easy to spot outliers (e.g. Picea
+  abies at ~60% vs Hordeum vulgare at ~98%).
+- **Click-to-select** — clicking a sequence row selects that species
+  (triggers the 3D morph). Mouse wheel scrolls horizontally through the
+  alignment. Panel is collapsible.
 
 ## What's new in v14
 
@@ -340,7 +364,7 @@ Browser: WebGL.
 
 ```
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v14)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v15)
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -361,6 +385,10 @@ Reads aligned.json (structure-aligner skill v2) and embeds:
     (a helix that is a helix in both species does not reshuffle); only
     genuinely changing regions move, insertions fade in, and timing is
     smoothstep-eased
+  - v15 SEQUENCE ALIGNMENT PANEL: MSA with BLOSUM62 similarity coloring
+    (red=dissimilar -> white -> green=identical), selected species row
+    highlighted with smooth cross-fade transition, click-to-select,
+    collapsible panel at bottom of viewer.
   - v14 UNION-SPACE MORPH + DoubleSide: handles both insertions AND
     deletions. Insertions fade in (radius 0->1), deletions collapse and
     fade out (1->0). DoubleSide material fixes "see inside tube" issue.
@@ -425,6 +453,222 @@ AA1TO3 = {'A': 'ALA', 'R': 'ARG', 'N': 'ASN', 'D': 'ASP', 'C': 'CYS',
           'L': 'LEU', 'K': 'LYS', 'M': 'MET', 'F': 'PHE', 'P': 'PRO',
           'S': 'SER', 'T': 'THR', 'W': 'TRP', 'Y': 'TYR', 'V': 'VAL',
           'X': 'GLY'}
+
+# BLOSUM62 substitution matrix as a flat dict for sequence similarity coloring.
+# Scores range from -4 (very dissimilar) to +11 (identical, e.g. W-W).
+# Used to color aligned sequence residues by similarity to the reference.
+BLOSUM62 = {
+    'A': {'A':4,'R':-1,'N':-2,'D':-2,'C':0,'Q':-1,'E':-1,'G':0,'H':-2,'I':-1,'L':-1,'K':-1,'M':-1,'F':-2,'P':-1,'S':1,'T':0,'W':-3,'Y':-2,'V':0},
+    'R': {'A':-1,'R':5,'N':0,'D':-2,'C':-3,'Q':1,'E':0,'G':-2,'H':0,'I':-3,'L':-2,'K':2,'M':-1,'F':-3,'P':-2,'S':-1,'T':-1,'W':-3,'Y':-2,'V':-3},
+    'N': {'A':-2,'R':0,'N':6,'D':1,'C':-3,'Q':0,'E':0,'G':0,'H':1,'I':-3,'L':-3,'K':0,'M':-2,'F':-3,'P':-2,'S':1,'T':0,'W':-4,'Y':-2,'V':-3},
+    'D': {'A':-2,'R':-2,'N':1,'D':6,'C':-3,'Q':0,'E':2,'G':-1,'H':-1,'I':-3,'L':-3,'K':-1,'M':-3,'F':-3,'P':-1,'S':0,'T':-1,'W':-4,'Y':-3,'V':-3},
+    'C': {'A':0,'R':-3,'N':-3,'D':-3,'C':9,'Q':-3,'E':-4,'G':-3,'H':-3,'I':-1,'L':-1,'K':-3,'M':-1,'F':-2,'P':-3,'S':-1,'T':-1,'W':-2,'Y':-2,'V':-1},
+    'Q': {'A':-1,'R':1,'N':0,'D':0,'C':-3,'Q':5,'E':2,'G':-2,'H':0,'I':-3,'L':-2,'K':1,'M':0,'F':-3,'P':-1,'S':0,'T':-1,'W':-2,'Y':-1,'V':-2},
+    'E': {'A':-1,'R':0,'N':0,'D':2,'C':-4,'Q':2,'E':5,'G':-2,'H':0,'I':-3,'L':-3,'K':1,'M':-2,'F':-3,'P':-1,'S':0,'T':-1,'W':-3,'Y':-2,'V':-2},
+    'G': {'A':0,'R':-2,'N':0,'D':-1,'C':-3,'Q':-2,'E':-2,'G':6,'H':-2,'I':-4,'L':-4,'K':-2,'M':-3,'F':-3,'P':-2,'S':0,'T':-2,'W':-2,'Y':-3,'V':-3},
+    'H': {'A':-2,'R':0,'N':1,'D':-1,'C':-3,'Q':0,'E':0,'G':-2,'H':8,'I':-3,'L':-2,'K':-1,'M':-2,'F':-1,'P':-2,'S':-1,'T':-2,'W':-2,'Y':2,'V':-3},
+    'I': {'A':-1,'R':-3,'N':-3,'D':-3,'C':-1,'Q':-3,'E':-3,'G':-4,'H':-3,'I':4,'L':2,'K':-3,'M':1,'F':0,'P':-3,'S':-2,'T':-1,'W':-3,'Y':-1,'V':3},
+    'L': {'A':-1,'R':-2,'N':-3,'D':-3,'C':-1,'Q':-2,'E':-3,'G':-4,'H':-2,'I':2,'L':4,'K':-2,'M':2,'F':0,'P':-3,'S':-2,'T':-1,'W':-2,'Y':-1,'V':1},
+    'K': {'A':-1,'R':2,'N':0,'D':-1,'C':-3,'Q':1,'E':1,'G':-2,'H':-1,'I':-3,'L':-2,'K':5,'M':-1,'F':-3,'P':-1,'S':0,'T':-1,'W':-3,'Y':-2,'V':-2},
+    'M': {'A':-1,'R':-1,'N':-2,'D':-3,'C':-1,'Q':0,'E':-2,'G':-3,'H':-2,'I':1,'L':2,'K':-1,'M':5,'F':0,'P':-2,'S':-1,'T':-1,'W':-1,'Y':-2,'V':1},
+    'F': {'A':-2,'R':-3,'N':-3,'D':-3,'C':-2,'Q':-3,'E':-3,'G':-3,'H':-1,'I':0,'L':0,'K':-3,'M':0,'F':6,'P':-4,'S':-2,'T':-1,'W':1,'Y':3,'V':-1},
+    'P': {'A':-1,'R':-2,'N':-2,'D':-1,'C':-3,'Q':-1,'E':-1,'G':-2,'H':-2,'I':-3,'L':-3,'K':-1,'M':-2,'F':-4,'P':7,'S':-1,'T':-2,'W':-4,'Y':-3,'V':-2},
+    'S': {'A':1,'R':-1,'N':1,'D':0,'C':-1,'Q':0,'E':0,'G':0,'H':-1,'I':-2,'L':-2,'K':0,'M':-1,'F':-2,'P':-1,'S':4,'T':1,'W':-3,'Y':-2,'V':-2},
+    'T': {'A':0,'R':-1,'N':0,'D':-1,'C':-1,'Q':-1,'E':-1,'G':-2,'H':-2,'I':-1,'L':-1,'K':-1,'M':-1,'F':-1,'P':-2,'S':1,'T':5,'W':-2,'Y':-2,'V':0},
+    'W': {'A':-3,'R':-3,'N':-4,'D':-4,'C':-2,'Q':-2,'E':-3,'G':-2,'H':-2,'I':-3,'L':-2,'K':-3,'M':-1,'F':1,'P':-4,'S':-3,'T':-2,'W':11,'Y':2,'V':-3},
+    'Y': {'A':-2,'R':-2,'N':-2,'D':-3,'C':-2,'Q':-1,'E':-2,'G':-3,'H':2,'I':-1,'L':-1,'K':-2,'M':-2,'F':3,'P':-3,'S':-2,'T':-2,'W':2,'Y':7,'V':-1},
+    'V': {'A':0,'R':-3,'N':-3,'D':-3,'C':-1,'Q':-2,'E':-2,'G':-3,'H':-3,'I':3,'L':1,'K':-2,'M':1,'F':-1,'P':-2,'S':-2,'T':0,'W':-3,'Y':-1,'V':4},
+}
+
+
+def blosum_score(a, b):
+    """BLOSUM62 substitution score between two amino acids.
+    Returns 0 for unknown residues (X, gaps, etc.)."""
+    if a not in BLOSUM62 or b not in BLOSUM62:
+        return 0
+    return BLOSUM62[a][b]
+
+
+def build_msa(structs, ref_seq, ref_acc):
+    """Build a multiple sequence alignment (MSA) anchored to the reference.
+
+    Uses a reference-anchored star alignment: the reference sequence defines
+    the column backbone (one column per reference residue, no gaps in the
+    reference row). Insertions from other sequences are placed in additional
+    columns between reference columns. The reference alignment row has NO
+    gaps, making it easy to map structure residue indices to MSA columns.
+
+    Returns:
+      - msa_seqs: list of (species, aligned_seq) in MSA column space
+      - msa_cols: number of columns in the MSA
+      - ref_col_map: list mapping reference residue index -> MSA column
+        (identity mapping since reference defines the backbone, but kept
+        for generality; ref residue i is at column ref_col_map[i])
+    """
+    n_ref = len(ref_seq)
+
+    # For each structure, get alignment pairs to reference
+    all_pairs = {}
+    for s in structs:
+        seq = s.get("seq") or ""
+        if not seq:
+            all_pairs[s["species"]] = []
+            continue
+        if s["accession"] == ref_acc:
+            all_pairs[s["species"]] = [(i, i) for i in range(min(len(seq), n_ref))]
+        else:
+            pairs = pl.sequence_pairs(seq, ref_seq)
+            all_pairs[s["species"]] = pairs
+
+    # Build seq_to_ref mapping
+    seq_to_ref = {}
+    for sp, pairs in all_pairs.items():
+        seq_to_ref[sp] = {si: ri for si, ri in pairs}
+
+    # For each non-reference sequence, find unpaired residues (insertions)
+    # and group them into blocks, noting which reference position they
+    # insert after.
+    seq_insertions = {}  # species -> list of (seq_start, seq_end, after_ref_idx)
+    for s in structs:
+        sp = s["species"]
+        if sp == ref_acc or sp not in seq_to_ref:
+            continue
+        seq = s.get("seq") or ""
+        if not seq:
+            continue
+        paired = set(seq_to_ref[sp].keys())
+        unpaired = [i for i in range(len(seq)) if i not in paired]
+        insertions = []
+        i = 0
+        while i < len(unpaired):
+            start = unpaired[i]
+            end = start
+            while i + 1 < len(unpaired) and unpaired[i + 1] == end + 1:
+                i += 1
+                end = unpaired[i]
+            # Find the reference position this block inserts after
+            before = -1
+            for j in range(start - 1, -1, -1):
+                if j in seq_to_ref[sp]:
+                    before = seq_to_ref[sp][j]
+                    break
+            insertions.append((start, end, before))
+            i += 1
+        seq_insertions[sp] = insertions
+
+    # Collect all insertion points: after_ref_idx -> list of (species, seq_start, seq_end)
+    # Each insertion block from each species gets its own set of columns.
+    # Multiple species inserting at the same point get separate column groups.
+    ins_points = {}  # after_ref_idx -> list of (species, seq_start, seq_end)
+    for sp, inss in seq_insertions.items():
+        for seq_start, seq_end, after_ref in inss:
+            if after_ref not in ins_points:
+                ins_points[after_ref] = []
+            ins_points[after_ref].append((sp, seq_start, seq_end))
+
+    # Build column layout:
+    # - Reference columns: one per reference residue (ref row has no gaps)
+    # - Insertion columns: between reference columns, one per inserted residue
+    #   from each species (each species gets its own columns)
+    # Column structure: {type: 'ref', ref_idx: int} or {type: 'ins', species: str, seq_idx: int}
+    columns = []
+    # Pre-insertion columns (insertions before first ref residue, after_ref = -1)
+    if -1 in ins_points:
+        for sp, ss, se in sorted(ins_points[-1]):
+            for k in range(ss, se + 1):
+                columns.append({"type": "ins", "species": sp, "seq_idx": k})
+    # Reference columns with interleaved insertion columns
+    for ri in range(n_ref):
+        columns.append({"type": "ref", "ref_idx": ri})
+        if ri in ins_points:
+            for sp, ss, se in sorted(ins_points[ri]):
+                for k in range(ss, se + 1):
+                    columns.append({"type": "ins", "species": sp, "seq_idx": k})
+    # Post-insertion columns (insertions after last ref residue)
+    if n_ref in ins_points:
+        for sp, ss, se in sorted(ins_points[n_ref]):
+            for k in range(ss, se + 1):
+                columns.append({"type": "ins", "species": sp, "seq_idx": k})
+
+    n_cols = len(columns)
+
+    # Build aligned sequences
+    msa_seqs = []
+    for s in structs:
+        sp = s["species"]
+        seq = s.get("seq") or ""
+        if not seq:
+            msa_seqs.append((sp, "-" * n_cols))
+            continue
+        # Build column -> residue mapping
+        col_to_res = {}
+        if sp in seq_to_ref:
+            # Map reference columns
+            for ci, col in enumerate(columns):
+                if col["type"] == "ref":
+                    ri = col["ref_idx"]
+                    # Find seq_idx that maps to this ref_idx
+                    for si, rj in seq_to_ref[sp].items():
+                        if rj == ri:
+                            col_to_res[ci] = seq[si]
+                            break
+        # Map insertion columns
+        for ci, col in enumerate(columns):
+            if col["type"] == "ins" and col["species"] == sp:
+                col_to_res[ci] = seq[col["seq_idx"]]
+        # Build the aligned string
+        aligned = []
+        for ci in range(n_cols):
+            aligned.append(col_to_res.get(ci, "-"))
+        msa_seqs.append((sp, "".join(aligned)))
+
+    # ref_col_map: reference residue i is at the column where type='ref' and ref_idx==i
+    ref_col_map = []
+    for ri in range(n_ref):
+        for ci, col in enumerate(columns):
+            if col["type"] == "ref" and col["ref_idx"] == ri:
+                ref_col_map.append(ci)
+                break
+
+    return msa_seqs, n_cols, ref_col_map
+
+
+def compute_similarity_scores(msa_seqs, ref_species):
+    """Compute per-column BLOSUM62 similarity scores for each sequence.
+
+    For each sequence, for each MSA column, compute the BLOSUM62 score
+    between the sequence's residue and the reference residue at that column.
+    Returns: list of (species, [score_per_column]) where scores are normalized
+    to [0, 1] (0 = dissimilar, 1 = identical).
+    """
+    ref_aligned = None
+    for sp, aln in msa_seqs:
+        if sp == ref_species:
+            ref_aligned = aln
+            break
+    if ref_aligned is None:
+        return [(sp, [0.5] * len(aln)) for sp, aln in msa_seqs]
+
+    n_cols = len(ref_aligned)
+    results = []
+    for sp, aln in msa_seqs:
+        scores = []
+        for ci in range(n_cols):
+            ref_aa = ref_aligned[ci]
+            seq_aa = aln[ci]
+            if ref_aa == "-" or seq_aa == "-":
+                scores.append(None)
+            else:
+                raw = blosum_score(seq_aa, ref_aa)
+                self_score = blosum_score(ref_aa, ref_aa)
+                if self_score > 0:
+                    norm = (raw + 4) / (self_score + 4)
+                    norm = max(0, min(1, norm))
+                else:
+                    norm = 0.5
+                scores.append(round(norm, 3))
+        results.append((sp, scores))
+    return results
 
 
 def hydrophobicity(seq, window=9):
@@ -659,13 +903,36 @@ def main():
         if s["accession"] == ref["accession"]:
             s["ref_pairs"] = [[i, i] for i in range(len(ref_coords))]
 
+    # v15: Build MSA and BLOSUM62 similarity scores for sequence panel
+    print("[sequences] building MSA and similarity scores ...", file=sys.stderr)
+    msa_seqs, n_msa_cols, ref_col_map = build_msa(structs, ref_seq, ref["accession"])
+    sim_scores = compute_similarity_scores(msa_seqs, ref["species"])
+    # Pack as compact arrays: {species: {aln: "...", sim: [0.5, null, ...]}}
+    seq_data = {}
+    for sp, aln in msa_seqs:
+        sim = next((s for ssp, s in sim_scores if ssp == sp), [0.5] * len(aln))
+        seq_data[sp] = {"aln": aln, "sim": sim}
+    # Overall identity per species (mean of non-null similarity scores)
+    identity = {}
+    for sp, aln in msa_seqs:
+        sim = seq_data[sp]["sim"]
+        valid = [s for s in sim if s is not None]
+        identity[sp] = round(sum(valid) / max(len(valid), 1), 3) if valid else 0
+
     payload = {
         "title": args.title,
         "reference": ref["accession"],
+        "referenceSpecies": ref["species"],
         "lineageOrder": LINEAGE_ORDER,
         "lineageColors": LINEAGE_COLORS,
         "tree": {"nodes": nodes, "edges": edges, "leaves": leaves},
         "structures": out_structs,
+        "sequences": {
+            "msaCols": n_msa_cols,
+            "refColMap": ref_col_map,
+            "data": seq_data,
+            "identity": identity,
+        },
     }
 
     template = open(os.path.join(os.path.dirname(
@@ -697,10 +964,31 @@ if __name__ == "__main__":
   html, body { margin:0; padding:0; height:100%; background:#0d1117;
               color:#e6edf3; font-family:system-ui, sans-serif;
               overflow:hidden; }
-  #app { display:flex; height:100%; }
-  #left { width:33%; min-width:300px; padding:14px; overflow:auto;
+  #app { display:flex; flex-direction:column; height:100%; }
+  #toprow { display:flex; flex:1; min-height:0; }
+  #left { width:280px; min-width:240px; padding:14px; overflow:auto;
           border-right:1px solid #21262d; }
-  #right { flex:1; position:relative; }
+  #center { flex:1; position:relative; min-width:0; }
+  #seqpanel { height:180px; border-top:1px solid #21262d;
+              display:flex; flex-direction:column; overflow:hidden;
+              transition:height 0.3s ease; }
+  #seqpanel.collapsed { height:28px; }
+  #seqheader { display:flex; align-items:center; justify-content:space-between;
+               padding:4px 12px; font-size:11px; color:#8b949e;
+               flex-shrink:0; cursor:pointer; user-select:none; }
+  #seqheader .seqtitle { font-weight:600; color:#e6edf3; font-size:12px; }
+  #seqheader .seqinfo { font-size:11px; }
+  #seqcontainer { flex:1; overflow:auto; padding:0 12px 8px 12px;
+                  font-family:monospace; font-size:11px; line-height:16px;
+                  position:relative; }
+  #seqcanvas { display:block; }
+  .seqrow { white-space:nowrap; }
+  #seqpanel .simbar { position:absolute; bottom:0; left:12px; right:12px;
+                      height:14px; font-size:9px; color:#8b949e;
+                      display:flex; align-items:center; gap:6px;
+                      pointer-events:none; }
+  #seqpanel .simbar .grad { flex:1; height:6px; border-radius:2px;
+                    background:linear-gradient(90deg,#d73a49,#e6edf3,#3fb950); }
   #paneltitle { font-size:15px; font-weight:700; margin-bottom:6px;
                 color:#e6edf3; }
   #sname { font-size:17px; font-weight:600; color:#e6edf3; }
@@ -728,35 +1016,47 @@ if __name__ == "__main__":
 </head>
 <body>
 <div id="app">
-  <div id="left">
-    <div id="paneltitle">__TITLE__</div>
-    <div id="tree"></div>
-    <div id="hint">Click a species to morph the structure.
-      Drag in the 3D window to rotate, scroll to zoom,
-      right-drag to pan.</div>
+  <div id="toprow">
+    <div id="left">
+      <div id="paneltitle">__TITLE__</div>
+      <div id="tree"></div>
+      <div id="hint">Click a species to morph the structure.
+        Drag in the 3D window to rotate, scroll to zoom,
+        right-drag to pan.</div>
+    </div>
+    <div id="center">
+      <div id="titlebar">
+        <div id="sname"></div>
+        <div id="ssub"></div>
+      </div>
+      <div id="stage" style="width:100%;height:100%"></div>
+      <div id="legend">
+        <span class="swatch" style="background:#2ca02c"></span>Green algae
+        <span class="swatch" style="background:#8c564b"></span>Bryophytes
+        <span class="swatch" style="background:#ff7f0e"></span>Ferns
+        <span class="swatch" style="background:#9467bd"></span>Gymnosperms
+        <span class="swatch" style="background:#d62728"></span>Angiosperms
+      </div>
+      <div id="sslegend">
+        <span class="swatch" style="height:9px;width:9px"></span>helix
+        <span class="swatch" style="height:6px;width:6px"></span>strand
+        <span class="swatch" style="height:3px;width:3px"></span>loop
+      </div>
+      <div id="hydrobar">
+        hydrophilic
+        <span class="grad"></span>
+        hydrophobic
+      </div>
+    </div>
   </div>
-  <div id="right">
-    <div id="titlebar">
-      <div id="sname"></div>
-      <div id="ssub"></div>
+  <div id="seqpanel">
+    <div id="seqheader" onclick="toggleSeqPanel()">
+      <span class="seqtitle">Sequence Alignment (vs. reference)</span>
+      <span class="seqinfo" id="seqinfo"></span>
+      <span id="seqtoggle">&#9660;</span>
     </div>
-    <div id="stage" style="width:100%;height:100%"></div>
-    <div id="legend">
-      <span class="swatch" style="background:#2ca02c"></span>Green algae
-      <span class="swatch" style="background:#8c564b"></span>Bryophytes
-      <span class="swatch" style="background:#ff7f0e"></span>Ferns
-      <span class="swatch" style="background:#9467bd"></span>Gymnosperms
-      <span class="swatch" style="background:#d62728"></span>Angiosperms
-    </div>
-    <div id="sslegend">
-      <span class="swatch" style="height:9px;width:9px"></span>helix
-      <span class="swatch" style="height:6px;width:6px"></span>strand
-      <span class="swatch" style="height:3px;width:3px"></span>loop
-    </div>
-    <div id="hydrobar">
-      hydrophilic
-      <span class="grad"></span>
-      hydrophobic
+    <div id="seqcontainer">
+      <canvas id="seqcanvas"></canvas>
     </div>
   </div>
 </div>
@@ -1182,6 +1482,9 @@ function resize() {
   renderer.setSize(w, h);
 }
 
+// Alias for external callers (e.g., sequence panel toggle)
+function resizeRenderer() { resize(); }
+
 function animateLoop() {
   requestAnimationFrame(animateLoop);
   controls.update();
@@ -1526,6 +1829,10 @@ function selectSpecies(sp) {
     entry.t.setAttribute('font-weight', '700');
     window.__selected = entry.t;
   }
+  // v15: transition sequence panel highlight
+  if (DATA.sequences && typeof transitionSeqHighlight === 'function') {
+    transitionSeqHighlight(sp);
+  }
 }
 
 // v10: morph duration ~1 second, time-eased (smoothstep) so the motion
@@ -1597,12 +1904,260 @@ function morphTick() {
   }
 }
 
+// ================= sequence alignment panel (v15) =================
+// Renders a multiple sequence alignment as a canvas. Each row is one species.
+// Residues are colored by BLOSUM62 similarity to the reference (red=dissimilar,
+// white=neutral, green=similar/identical). The selected species' row is
+// highlighted with a border and brought into view. Smooth transition when
+// switching species.
+
+let seqCanvas, seqCtx;
+let seqState = {
+  scrollX: 0, scrollY: 0,
+  charW: 7, charH: 16, labelW: 160, rowH: 18,
+  selectedSpecies: null,
+  highlightAlpha: 0,  // 0 = no highlight, 1 = full highlight (for smooth transition)
+  targetSpecies: null,
+  speciesOrder: [],   // species in display order (same as tree leaves)
+  colWidth: 0,        // total width of the alignment in pixels
+  nCols: 0,
+  animating: false,
+};
+
+function initSeqPanel() {
+  if (!DATA.sequences) return;
+  seqCanvas = document.getElementById('seqcanvas');
+  seqCtx = seqCanvas.getContext('2d');
+  seqState.nCols = DATA.sequences.msaCols;
+  // Species order follows tree leaves
+  seqState.speciesOrder = DATA.tree.leaves.slice();
+  // Set canvas size
+  resizeSeqCanvas();
+  // Mouse wheel scrolling
+  const container = document.getElementById('seqcontainer');
+  container.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    seqState.scrollX = Math.max(0, Math.min(
+      seqState.colWidth - container.clientWidth + 20,
+      seqState.scrollX + e.deltaY));
+    drawSeqPanel();
+  }, {passive: false});
+  // Click on a row to select that species
+  seqCanvas.addEventListener('click', (e) => {
+    const rect = seqCanvas.getBoundingClientRect();
+    const y = e.clientY - rect.top + seqState.scrollY;
+    const rowIdx = Math.floor((y - 4) / seqState.rowH);
+    if (rowIdx >= 0 && rowIdx < seqState.speciesOrder.length) {
+      const sp = seqState.speciesOrder[rowIdx];
+      selectSpecies(sp);
+    }
+  });
+  // Resize handler
+  window.addEventListener('resize', () => {
+    resizeSeqCanvas();
+    drawSeqPanel();
+  });
+  drawSeqPanel();
+}
+
+function resizeSeqCanvas() {
+  if (!seqCanvas || !DATA.sequences) return;
+  const container = document.getElementById('seqcontainer');
+  const dpr = window.devicePixelRatio || 1;
+  const w = container.clientWidth;
+  const nRows = seqState.speciesOrder.length;
+  seqState.colWidth = seqState.labelW + seqState.nCols * seqState.charW + 20;
+  const h = nRows * seqState.rowH + 8;
+  seqCanvas.width = seqState.colWidth * dpr;
+  seqCanvas.height = h * dpr;
+  seqCanvas.style.width = seqState.colWidth + 'px';
+  seqCanvas.style.height = h + 'px';
+  seqCtx.scale(dpr, dpr);
+}
+
+function toggleSeqPanel() {
+  const panel = document.getElementById('seqpanel');
+  const toggle = document.getElementById('seqtoggle');
+  panel.classList.toggle('collapsed');
+  toggle.innerHTML = panel.classList.contains('collapsed') ? '&#9650;' : '&#9660;';
+  // Resize 3D renderer after panel toggle
+  setTimeout(() => {
+    if (typeof resizeRenderer === 'function') resizeRenderer();
+  }, 320);
+}
+
+// BLOSUM62 similarity to color: red (dissimilar) -> white (neutral) -> green (similar)
+function simToColor(sim) {
+  // sim in [0, 1]: 0 = very dissimilar, 1 = identical
+  if (sim === null || sim === undefined) return '#30363d';  // gap
+  let r, g, b;
+  if (sim < 0.5) {
+    // red to white
+    const u = sim / 0.5;
+    r = 215 + (230 - 215) * u;
+    g = 58 + (237 - 58) * u;
+    b = 73 + (243 - 73) * u;
+  } else {
+    // white to green
+    const u = (sim - 0.5) / 0.5;
+    r = 230 + (63 - 230) * u;
+    g = 237 + (185 - 237) * u;
+    b = 243 + (80 - 243) * u;
+  }
+  return 'rgb(' + Math.round(r) + ',' + Math.round(g) + ',' + Math.round(b) + ')';
+}
+
+function drawSeqPanel() {
+  if (!seqCtx || !DATA.sequences) return;
+  const ctx = seqCtx;
+  const S = seqState;
+  const cw = S.charW, ch = S.charH, lw = S.labelW, rh = S.rowH;
+  const nRows = S.speciesOrder.length;
+  const totalH = nRows * rh + 8;
+
+  // Clear
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, S.colWidth, totalH);
+
+  const scrollX = S.scrollX;
+  const scrollY = S.scrollY;
+  const container = document.getElementById('seqcontainer');
+  const visW = container.clientWidth;
+
+  // Draw each row
+  for (let ri = 0; ri < nRows; ri++) {
+    const sp = S.speciesOrder[ri];
+    const seqData = DATA.sequences.data[sp];
+    if (!seqData) continue;
+    const aln = seqData.aln;
+    const sim = seqData.sim;
+    const y = 4 + ri * rh - scrollY;
+    if (y + rh < 0 || y > container.clientHeight) continue;  // off-screen
+
+    const isSelected = (sp === S.selectedSpecies);
+    const isAnimating = (sp === S.targetSpecies && S.animating);
+    const identity = DATA.sequences.identity[sp] || 0;
+
+    // Row background highlight (smooth transition)
+    let highlightAlpha = 0;
+    if (isSelected) highlightAlpha = S.highlightAlpha;
+    else if (isAnimating) highlightAlpha = 1 - S.highlightAlpha;
+    if (highlightAlpha > 0.01) {
+      ctx.fillStyle = 'rgba(88, 166, 255, ' + (highlightAlpha * 0.15) + ')';
+      ctx.fillRect(0, y, S.colWidth, rh);
+      // Left border accent
+      ctx.fillStyle = 'rgba(88, 166, 255, ' + (highlightAlpha * 0.8) + ')';
+      ctx.fillRect(0, y, 3, rh);
+    }
+
+    // Species label
+    ctx.fillStyle = isSelected ? '#58a6ff' : '#8b949e';
+    ctx.font = (isSelected ? 'bold ' : '') + '11px monospace';
+    ctx.textBaseline = 'middle';
+    const label = sp.length > 22 ? sp.substring(0, 21) + '\u2026' : sp;
+    ctx.fillText(label, 6, y + rh / 2);
+    // Identity percentage
+    ctx.fillStyle = isSelected ? '#58a6ff' : '#484f58';
+    ctx.font = '9px monospace';
+    ctx.fillText(Math.round(identity * 100) + '%', lw - 40, y + rh / 2);
+
+    // Sequence characters (only visible columns)
+    const startCol = Math.max(0, Math.floor((scrollX - lw) / cw));
+    const endCol = Math.min(S.nCols, Math.ceil((scrollX + visW - lw) / cw));
+    ctx.font = '11px monospace';
+    ctx.textBaseline = 'middle';
+    for (let ci = startCol; ci < endCol; ci++) {
+      const aa = aln[ci];
+      const x = lw + ci * cw - scrollX;
+      if (aa === '-') {
+        // Gap: draw a faint dash
+        ctx.fillStyle = '#21262d';
+        ctx.fillText('-', x, y + rh / 2);
+      } else {
+        const s = sim[ci];
+        ctx.fillStyle = simToColor(s);
+        ctx.fillText(aa, x, y + rh / 2);
+      }
+    }
+  }
+
+  // Position ruler at top
+  ctx.fillStyle = '#484f58';
+  ctx.font = '9px monospace';
+  ctx.textBaseline = 'middle';
+  const rulerY = -scrollY + 2;
+  if (rulerY > -10 && rulerY < 20) {
+    const startCol = Math.max(0, Math.floor((scrollX - lw) / cw));
+    const endCol = Math.min(S.nCols, Math.ceil((scrollX + visW - lw) / cw));
+    for (let ci = startCol; ci < endCol; ci += 50) {
+      const x = lw + ci * cw - scrollX;
+      ctx.fillText(String(ci + 1), x, rulerY);
+    }
+  }
+
+  // Update info text
+  const info = document.getElementById('seqinfo');
+  if (info && S.selectedSpecies) {
+    const ident = DATA.sequences.identity[S.selectedSpecies] || 0;
+    info.textContent = S.selectedSpecies + ' \u00b7 ' + Math.round(ident * 100) + '% identity to reference';
+  }
+}
+
+// Smooth transition: animate highlight from old species to new species
+function transitionSeqHighlight(newSpecies) {
+  const S = seqState;
+  if (S.selectedSpecies === newSpecies) return;
+  S.targetSpecies = newSpecies;
+  S.animating = true;
+  S.highlightAlpha = 0;
+  const startTime = performance.now();
+  const duration = 400;  // ms
+
+  function animStep() {
+    const f = Math.min(1, (performance.now() - startTime) / duration);
+    S.highlightAlpha = f;  // 0 -> 1 (old fades out, new fades in)
+    drawSeqPanel();
+    if (f < 1) {
+      requestAnimationFrame(animStep);
+    } else {
+      S.selectedSpecies = newSpecies;
+      S.targetSpecies = null;
+      S.animating = false;
+      S.highlightAlpha = 1;
+      drawSeqPanel();
+      // Scroll to bring selected row into view
+      scrollToSelectedRow();
+    }
+  }
+  animStep();
+}
+
+function scrollToSelectedRow() {
+  const S = seqState;
+  if (!S.selectedSpecies) return;
+  const ri = S.speciesOrder.indexOf(S.selectedSpecies);
+  if (ri < 0) return;
+  const container = document.getElementById('seqcontainer');
+  const rowY = 4 + ri * S.rowH;
+  const targetScroll = Math.max(0, rowY - container.clientHeight / 2);
+  S.scrollY = targetScroll;
+  container.scrollTop = 0;  // we handle scrolling manually via canvas
+  drawSeqPanel();
+}
+
 // ================= boot =================
 renderTree();
 init3D();
+initSeqPanel();
 const init = DATA.structures.find(s => s.accession === DATA.reference) ||
              DATA.structures[0];
 selectSpecies(init.species);
+// Set initial sequence panel selection
+if (DATA.sequences) {
+  seqState.selectedSpecies = init.species;
+  seqState.highlightAlpha = 1;
+  drawSeqPanel();
+}
 </script>
 </body>
 </html>

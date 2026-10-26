@@ -6,6 +6,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
+  v15: sequence alignment panel — MSA with BLOSUM62 similarity coloring
+  (red=dissimilar, white=neutral, green=identical), selected species row
+  highlighted with smooth transition, click-to-select, collapsible panel.
   v14: union-space morph handles both insertions AND deletions. Insertions
   fade in (radius scales 0→1), deletions collapse and fade out (1→0).
   DoubleSide material fixes "see inside tube" issue. No more clumped
@@ -20,9 +23,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 14
+version: 15
 ---
-# Interactive Evolution Viewer (v14)
+# Interactive Evolution Viewer (v15)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -35,6 +38,27 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v15
+
+- **Sequence alignment panel** — a third panel at the bottom shows a multiple
+  sequence alignment (MSA) of all species, anchored to the reference sequence.
+  The reference row has no gaps; insertions from other species appear as
+  extra columns between reference columns.
+- **BLOSUM62 similarity coloring** — each residue is colored by its BLOSUM62
+  substitution score relative to the reference residue at the same column,
+  normalized by the reference residue's self-score. Color scale:
+  red (dissimilar, e.g. charged vs hydrophobic) → white (neutral) →
+  green (identical/similar, e.g. D↔E both acidic, K↔R both basic).
+- **Selected species highlight** — the selected species' row is highlighted
+  with a blue background and left accent border. Switching species triggers
+  a smooth 400ms cross-fade transition between the old and new highlights.
+- **Identity percentage** — each row shows the overall BLOSUM62-normalized
+  identity to the reference, making it easy to spot outliers (e.g. Picea
+  abies at ~60% vs Hordeum vulgare at ~98%).
+- **Click-to-select** — clicking a sequence row selects that species
+  (triggers the 3D morph). Mouse wheel scrolls horizontally through the
+  alignment. Panel is collapsible.
 
 ## What's new in v14
 

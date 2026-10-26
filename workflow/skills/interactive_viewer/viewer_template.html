@@ -12,11 +12,15 @@
   #app { display:flex; flex-direction:column; height:100%; }
   #toprow { display:flex; flex:1; min-height:0; }
   #left { width:280px; min-width:240px; padding:14px; overflow:auto;
-          border-right:1px solid #21262d; }
+          border-right:1px solid #21262d; flex-shrink:0; }
   #center { flex:1; position:relative; min-width:0; }
+  /* v17: Resizable left panel */
+  #leftresize { position:absolute; top:0; right:-3px; width:6px; height:100%;
+               cursor:ew-resize; z-index:10; }
+  #leftresize:hover { background:rgba(88,166,255,0.2); }
   #seqpanel { height:180px; border-top:1px solid #21262d;
               display:flex; flex-direction:column; overflow:hidden;
-              flex-shrink:0; }
+              flex-shrink:0; position:relative; }
   #seqpanel.collapsed { height:28px; }
   #seqheader { display:flex; align-items:center; justify-content:space-between;
                padding:4px 12px; font-size:11px; color:#8b949e;
@@ -74,12 +78,13 @@
 <body>
 <div id="app">
   <div id="toprow">
-    <div id="left">
+    <div id="left" style="position:relative;">
       <div id="paneltitle">__TITLE__</div>
       <div id="tree"></div>
       <div id="hint">Click a species to morph the structure.
         Drag in the 3D window to rotate, scroll to zoom,
         right-drag to pan.</div>
+      <div id="leftresize" title="Drag to resize"></div>
     </div>
     <div id="center">
       <div id="titlebar">
@@ -542,6 +547,35 @@ function resize() {
 
 // Alias for external callers (e.g., sequence panel toggle)
 function resizeRenderer() { resize(); }
+
+// v17: Draggable resize handle for the left (tree) panel
+function initLeftResize() {
+  const handle = document.getElementById('leftresize');
+  const panel = document.getElementById('left');
+  if (!handle || !panel) return;
+  let startX = 0, startW = 0;
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+    function onMove(ev) {
+      const dx = ev.clientX - startX;  // drag right = wider
+      const newW = Math.max(180, Math.min(500, startW + dx));
+      panel.style.width = newW + 'px';
+      if (typeof resizeRenderer === 'function') resizeRenderer();
+    }
+    function onUp() {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
 
 function animateLoop() {
   requestAnimationFrame(animateLoop);
@@ -1295,7 +1329,10 @@ function drawSeqPanel() {
     const aln = seqData.aln;
     const sim = seqData.sim;
     const y = 4 + ri * rh - scrollY;
-    if (y + rh < 0 || y > container.clientHeight) continue;  // off-screen
+    // v17: Always draw all rows — the canvas is sized to fit all content
+    // and the container scrolls natively. Never skip off-screen rows.
+    // (The culling was a v15 optimization for manual scrolling; with native
+    // overflow:auto the canvas must be full-height for scrolling to work.)
 
     const isSelected = (sp === S.selectedSpecies);
     const isAnimating = (sp === S.targetSpecies && S.animating);
@@ -1460,6 +1497,7 @@ function scrollToSelectedResidue() {
 renderTree();
 init3D();
 initSeqPanel();
+initLeftResize();  // v17: draggable left panel resize
 const init = DATA.structures.find(s => s.accession === DATA.reference) ||
              DATA.structures[0];
 selectSpecies(init.species);

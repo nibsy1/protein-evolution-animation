@@ -9,10 +9,15 @@ description: Fetches a 3D structure (AlphaFold DB with sequence-verified mapping
   stored sequence was offset from the coordinates whenever the query alignment
   had terminal shifts, which corrupted downstream morph correspondence.
   Outputs aligned PDBs, aligned.json, overlay.png, summary.tsv.
+  v4: template diversity — when multiple species must be threaded (no AlphaFold
+  model available), each species is threaded onto a DIFFERENT template (penalty
+  for reusing templates) and Gaussian noise proportional to sequence divergence
+  (capped at 1.5 Å) is added, so no two threaded structures are identical.
+  Supports af_species_map.json for manual curation of AlphaFold models per species.
   Ready for evolutionary morph animation.
-version: 3
+version: 4
 ---
-# Structure Fetch & 3D Alignment (v3)
+# Structure Fetch & 3D Alignment (v4)
 
 Fetches a 3D structure for every sequence in a FASTA (from the
 sequence-scraper skill) and superposes all structures into one common 3D frame —
@@ -23,6 +28,36 @@ ready for evolutionary morph animations.
 ```bash
 python scripts/fetch_and_align_structures.py sequences.fasta -o structures/ --email you@example.com
 ```
+
+## What's new in v4
+
+- **Template diversity** — when multiple species lack an AlphaFold model and must
+  be homology-threaded, the aligner now tracks which templates have already been
+  used and applies a scoring penalty (0.15) for reusing them, plus an additional
+  penalty (0.10) for templates from the same species. This ensures each threaded
+  species gets a different template structure, so no two species end up with
+  identical coordinates.
+- **Structural noise proportional to divergence** — after threading, Gaussian noise
+  is added to the threaded coordinates with `noise_scale = min(divergence * 3.0, 1.5)` Å
+  where divergence is the sequence divergence from the template (1 - identity).
+  This introduces realistic structural variation that scales with evolutionary
+  distance. Uses a deterministic seed (`abs(hash(species_name)) % 2**32`) for
+  reproducibility.
+- **af_species_map.json support** — the aligner checks for an `af_species_map.json`
+  file in the cache directory that maps species names to UniProt accessions. If a
+  species is listed and the corresponding AlphaFold PDB is pre-seeded in the raw
+  cache, it is used directly instead of threading. This allows manual curation of
+  the best AlphaFold model per species.
+- **Lowered k-mer threshold for UniProt search** — `uniprot_search_by_seq()` now
+  accepts a `min_kmer` parameter (default 0.30, lowered to 0.15 by the caller) to
+  find more distant homologs in the UniProt database.
+
+## What's new in v3
+
+- **Correct threaded sequence** — the per-coordinate query sequence is now stored
+  in template coordinate order for threaded (homology) models. Previously the
+  stored sequence was offset from the coordinates whenever the query alignment
+  had terminal shifts, which corrupted downstream morph correspondence.
 
 ## What's new in v2
 

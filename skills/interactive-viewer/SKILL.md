@@ -6,10 +6,12 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   hydrophilic → white → red hydrophobic), and a stability-masked smooth morph
   on species selection. No membrane visualization. Single self-contained HTML
   from aligned.json (structure-aligner v2).
-  v16: native scrolling (all rows always visible when scrolled), draggable
-  panel resize handle (60–600px), click individual amino acid → 3D gold
-  sphere+ring highlight that persists across species switches (auto-removed
-  if residue doesn't exist in next structure).
+  v17: all sequence rows always drawn (no off-screen culling — every row is
+  always active and visible when scrolled into view), draggable left panel
+  resize handle (180–500px, ew-resize cursor at right edge of tree panel).
+  v16: native scrolling, draggable bottom panel resize handle (60–600px),
+  click individual amino acid → 3D gold sphere+ring highlight that persists
+  across species switches (auto-removed if residue doesn't exist in next structure).
   v15: sequence alignment panel — MSA with BLOSUM62 similarity coloring
   (red=dissimilar, white=neutral, green=identical), selected species row
   highlighted with smooth transition, click-to-select, collapsible panel.
@@ -27,9 +29,9 @@ description: Generates an interactive HTML viewer: clickable phylogenetic tree +
   replaces separate helix boxes + strand arrows — no more broken morph rendering.
   No geometry rebuild at morph end — no more orientation jump. Pure hydropathy
   coloring. SS legend. N-/C-terminus markers.
-version: 16
+version: 17
 ---
-# Interactive Evolution Viewer (v16)
+# Interactive Evolution Viewer (v17)
 
 Generates a single self-contained HTML file: an interactive
 phylogenetic tree next to a rotatable 3D structure viewer.
@@ -42,6 +44,22 @@ python scripts/interactive_viewer.py structures/aligned.json -o viewer.html --ti
 ```
 
 Open `viewer.html` in any browser (needs internet for the Three.js CDN).
+
+## What's new in v17
+
+- **All sequence rows always drawn** — removed the off-screen row culling in
+  `drawSeqPanel()`. Previously, rows outside the visible panel area were
+  skipped during canvas redraw, which meant they stayed invisible (stale
+  pixels) until you clicked them. Now every row is always drawn on every
+  redraw, so all sequences are always active and visible when scrolled
+  into view. The canvas is sized to the full content height and the
+  container scrolls natively with `overflow:auto`.
+- **Draggable left panel border** — a resize handle (`#leftresize`, 6px
+  vertical bar at the right edge of the phylogenetic tree panel,
+  `ew-resize` cursor) lets the user adjust the left panel width between
+  180px and 500px. The 3D renderer resizes in real time via `resizeRenderer()`.
+  The left panel now has `flex-shrink:0` so it doesn't get compressed by
+  the center panel.
 
 ## What's new in v16
 

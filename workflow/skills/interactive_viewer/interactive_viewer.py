@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v16)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v17)
+
+v17 changes:
+    - All sequence rows always drawn (no off-screen culling) — every row is
+      active and visible when scrolled into view via native overflow:auto.
+    - Draggable left panel resize handle (180–500px, ew-resize cursor).
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html

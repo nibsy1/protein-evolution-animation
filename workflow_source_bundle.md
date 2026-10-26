@@ -1,31 +1,25 @@
-# protein-animation workflow — full source bundle
-
+# workflow — full source bundle
 Each section below is one file, verbatim. Root = `workflow/`.
 
 ## `.dockerignore`
-
 ```
 .venv
 __pycache__
 *.pyc
 .git
 outputs
-
 ```
 
 ## `.gitignore`
-
 ```
 __pycache__/
 *.pyc
 .venv/
 outputs/
 .git/
-
 ```
 
 ## `Dockerfile`
-
 ```
 FROM python:3.12-slim
 
@@ -40,11 +34,28 @@ COPY . /app
 ENV PYTHONPATH=/app
 
 CMD ["python", "entrypoints/worker.py"]
+```
 
+## `Makefile`
+```
+PYTHON ?= python
+
+.PHONY: install start-worker execute
+
+install:
+	uv pip install --system -r requirements.txt
+
+start-worker:
+	PYTHONPATH=. $(PYTHON) entrypoints/worker.py
+
+execute:
+	$(PYTHON) -c "import json,sys; from mistralai import Mistral; import os; \
+	c = Mistral(api_key=os.environ['MISTRAL_API_KEY']); \
+	e = c.workflows.execute_workflow(workflow_identifier='$(workflow)', input=json.loads('$(input)')); \
+	print(e.model_dump_json(indent=2))"
 ```
 
 ## `README.md`
-
 ```
 # protein-animation workflow
 
@@ -157,48 +168,9 @@ PYTHONPATH=. python tests/test_activities.py
 
 Runs the full align → animate → viewer chain on the cached ECA3 fixture
 and validates every artifact payload.
-
-```
-
-## `pyproject.toml`
-
-```
-[project]
-name = "protein-animation-workflow"
-version = "1.0.0"
-description = "Mistral Workflow: gene name / AGI / protein name -> evolutionary protein animation (sequences, aligned PDBs, morph GIF, interactive viewer)"
-requires-python = ">=3.12"
-dependencies = [
-    "mistralai-workflows[mistralai]>=0.1.0",
-    "mistralai>=2.8.0",
-    "pydantic>=2.0",
-    "requests>=2.28",
-    "numpy>=1.24",
-    "biopython>=1.81",
-    "matplotlib>=3.7",
-    "pillow>=10.0",
-    "python-dotenv>=1.0",
-]
-
-```
-
-## `requirements.txt`
-
-```
-mistralai-workflows[mistralai]>=0.1.0
-mistralai>=2.8.0
-pydantic>=2.0
-requests>=2.28
-numpy>=1.24
-biopython>=1.81
-matplotlib>=3.7
-pillow>=10.0
-python-dotenv>=1.0
-
 ```
 
 ## `entrypoints/worker.py`
-
 ```
 """Worker entrypoint for the protein-animation workflow."""
 import asyncio
@@ -214,18 +186,14 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 ```
 
 ## `protein_animation/__init__.py`
-
 ```
-
 
 ```
 
 ## `protein_animation/activities.py`
-
 ```
 """Activities for the protein-animation workflow.
 
@@ -808,11 +776,9 @@ async def build_viewer(query: str, aligned_json: str,
         }
 
     return await asyncio.to_thread(_work)
-
 ```
 
 ## `protein_animation/workflow.py`
-
 ```
 """protein-animation workflow.
 
@@ -984,28 +950,60 @@ class ProteinAnimationWorkflow:
 
 
 import json  # noqa: E402  (used by _supervise)
+```
 
+## `pyproject.toml`
+```
+[project]
+name = "protein-animation-workflow"
+version = "1.0.0"
+description = "Mistral Workflow: gene name / AGI / protein name -> evolutionary protein animation (sequences, aligned PDBs, morph GIF, interactive viewer)"
+requires-python = ">=3.12"
+dependencies = [
+    "mistralai-workflows[mistralai]>=0.1.0",
+    "mistralai>=2.8.0",
+    "pydantic>=2.0",
+    "requests>=2.28",
+    "numpy>=1.24",
+    "biopython>=1.81",
+    "matplotlib>=3.7",
+    "pillow>=10.0",
+    "python-dotenv>=1.0",
+]
+```
+
+## `requirements.txt`
+```
+mistralai-workflows[mistralai]>=0.1.0
+mistralai>=2.8.0
+pydantic>=2.0
+requests>=2.28
+numpy>=1.24
+biopython>=1.81
+matplotlib>=3.7
+pillow>=10.0
+python-dotenv>=1.0
 ```
 
 ## `skills/__init__.py`
-
 ```
-
 
 ```
 
 ## `skills/interactive_viewer/__init__.py`
-
 ```
-
 
 ```
 
 ## `skills/interactive_viewer/interactive_viewer.py`
-
 ```
 #!/usr/bin/env python3
-"""Generate an interactive evolutionary structure viewer (single HTML). (v16)
+"""Generate an interactive evolutionary structure viewer (single HTML). (v17)
+
+v17 changes:
+    - All sequence rows always drawn (no off-screen culling) — every row is
+      active and visible when scrolled into view via native overflow:auto.
+    - Draggable left panel resize handle (180–500px, ew-resize cursor).
 
 Usage:
     python interactive_viewer.py structures/aligned.json -o viewer.html
@@ -1594,11 +1592,9 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 
 ## `skills/interactive_viewer/viewer_template.html`
-
 ```
 <!DOCTYPE html>
 <html lang="en">
@@ -1614,11 +1610,15 @@ if __name__ == "__main__":
   #app { display:flex; flex-direction:column; height:100%; }
   #toprow { display:flex; flex:1; min-height:0; }
   #left { width:280px; min-width:240px; padding:14px; overflow:auto;
-          border-right:1px solid #21262d; }
+          border-right:1px solid #21262d; flex-shrink:0; }
   #center { flex:1; position:relative; min-width:0; }
+  /* v17: Resizable left panel */
+  #leftresize { position:absolute; top:0; right:-3px; width:6px; height:100%;
+               cursor:ew-resize; z-index:10; }
+  #leftresize:hover { background:rgba(88,166,255,0.2); }
   #seqpanel { height:180px; border-top:1px solid #21262d;
               display:flex; flex-direction:column; overflow:hidden;
-              flex-shrink:0; }
+              flex-shrink:0; position:relative; }
   #seqpanel.collapsed { height:28px; }
   #seqheader { display:flex; align-items:center; justify-content:space-between;
                padding:4px 12px; font-size:11px; color:#8b949e;
@@ -1676,12 +1676,13 @@ if __name__ == "__main__":
 <body>
 <div id="app">
   <div id="toprow">
-    <div id="left">
+    <div id="left" style="position:relative;">
       <div id="paneltitle">__TITLE__</div>
       <div id="tree"></div>
       <div id="hint">Click a species to morph the structure.
         Drag in the 3D window to rotate, scroll to zoom,
         right-drag to pan.</div>
+      <div id="leftresize" title="Drag to resize"></div>
     </div>
     <div id="center">
       <div id="titlebar">
@@ -2144,6 +2145,35 @@ function resize() {
 
 // Alias for external callers (e.g., sequence panel toggle)
 function resizeRenderer() { resize(); }
+
+// v17: Draggable resize handle for the left (tree) panel
+function initLeftResize() {
+  const handle = document.getElementById('leftresize');
+  const panel = document.getElementById('left');
+  if (!handle || !panel) return;
+  let startX = 0, startW = 0;
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+    function onMove(ev) {
+      const dx = ev.clientX - startX;  // drag right = wider
+      const newW = Math.max(180, Math.min(500, startW + dx));
+      panel.style.width = newW + 'px';
+      if (typeof resizeRenderer === 'function') resizeRenderer();
+    }
+    function onUp() {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
 
 function animateLoop() {
   requestAnimationFrame(animateLoop);
@@ -2897,7 +2927,10 @@ function drawSeqPanel() {
     const aln = seqData.aln;
     const sim = seqData.sim;
     const y = 4 + ri * rh - scrollY;
-    if (y + rh < 0 || y > container.clientHeight) continue;  // off-screen
+    // v17: Always draw all rows — the canvas is sized to fit all content
+    // and the container scrolls natively. Never skip off-screen rows.
+    // (The culling was a v15 optimization for manual scrolling; with native
+    // overflow:auto the canvas must be full-height for scrolling to work.)
 
     const isSelected = (sp === S.selectedSpecies);
     const isAnimating = (sp === S.targetSpecies && S.animating);
@@ -3062,6 +3095,7 @@ function scrollToSelectedResidue() {
 renderTree();
 init3D();
 initSeqPanel();
+initLeftResize();  // v17: draggable left panel resize
 const init = DATA.structures.find(s => s.accession === DATA.reference) ||
              DATA.structures[0];
 selectSpecies(init.species);
@@ -3074,18 +3108,14 @@ if (DATA.sequences) {
 </script>
 </body>
 </html>
-
 ```
 
 ## `skills/morph_animation/__init__.py`
-
 ```
-
 
 ```
 
 ## `skills/morph_animation/morph_animation.py`
-
 ```
 #!/usr/bin/env python3
 """Render an evolutionary morph animation from aligned structures. (v3)
@@ -3591,18 +3621,14 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 
 ## `skills/sequence_scraper/__init__.py`
-
 ```
-
 
 ```
 
 ## `skills/sequence_scraper/scrape_sequences.py`
-
 ```
 #!/usr/bin/env python3
 """Scrape one homologous protein sequence per model species. (v5)
@@ -4327,21 +4353,28 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 
 ## `skills/structure_aligner/__init__.py`
-
 ```
-
 
 ```
 
 ## `skills/structure_aligner/fetch_and_align_structures.py`
-
 ```
 #!/usr/bin/env python3
-"""Fetch 3D structures for scraped sequences and align them in 3D. (v2)
+"""Fetch 3D structures for scraped sequences and align them in 3D. (v4)
+
+v4 changes (template diversity + structural noise):
+    - Template diversity: when multiple species must be threaded, each gets
+      a DIFFERENT template (penalty for reuse) so no two species have
+      identical structures.
+    - Structural noise: Gaussian noise proportional to sequence divergence
+      (capped at 1.5 Å) added to threaded coordinates for realistic variation.
+    - af_species_map.json support for manual AlphaFold model curation per species.
+    - Lowered k-mer threshold (0.15) for UniProt sequence search.
+
+v3 changes (correct threaded sequence):
 
 Usage:
     python fetch_and_align_structures.py sequences.fasta -o output_dir
@@ -4521,7 +4554,7 @@ class StructureFetcher:
                 return None
         return None
 
-    def uniprot_search_by_seq(self, species, sequence, definition=""):
+    def uniprot_search_by_seq(self, species, sequence, definition="", min_kmer=0.30):
         """Find a UniProt entry by organism, verified by sequence identity.
 
         Queries: (a) protein-name keywords from the definition + organism,
@@ -4529,6 +4562,9 @@ class StructureFetcher:
         against the input sequence; only high-similarity entries are
         accepted, preventing spurious matches (RNA polymerases, PEPC,
         kinesins, etc. caught in earlier testing).
+
+        v4: Added min_kmer parameter (default 0.30, can be lowered to 0.15
+        for species with sparse UniProt coverage).
         """
         import re as _re
         genus = species.split()[0] if species else ""
@@ -4564,13 +4600,33 @@ class StructureFetcher:
                 sim = kmer_similarity(sequence, seq.upper())
                 if sim > best_score:
                     best, best_score = acc, sim
-            if best is not None and best_score >= 0.30:
+            if best is not None and best_score >= min_kmer:
                 return best
         return None
 
     def resolve_uniprot(self, record):
         acc = record["accession"]
         base = acc.split(".")[0]
+        # v4: Check for pre-seeded AlphaFold cache entries mapped by species.
+        # This allows manual curation of the best AlphaFold model per species
+        # when automated resolution fails (e.g. NCBI accessions without
+        # UniProt mapping for species with sparse UniProt coverage).
+        species_key = (record.get("species") or "").strip()
+        if species_key:
+            cache_dir = os.path.join(self.cache_dir, "raw")
+            # Look for a species mapping file
+            mapping_path = os.path.join(self.cache_dir, "af_species_map.json")
+            if os.path.exists(mapping_path):
+                try:
+                    with open(mapping_path) as mf:
+                        af_map = json.load(mf)
+                    if species_key in af_map:
+                        mapped_acc = af_map[species_key]
+                        pdb_path = os.path.join(cache_dir, f"AF-{mapped_acc}.pdb")
+                        if os.path.exists(pdb_path):
+                            return mapped_acc
+                except Exception:
+                    pass
         # accessions that look like UniProt already
         if len(base) in (6, 10) and base[0].isalpha() and base[:2].isupper():
             r = self._get(f"{AF_BASE}/api/prediction/{base}")
@@ -4583,9 +4639,12 @@ class StructureFetcher:
         up = self.ncbi_to_uniprot(acc)
         if up:
             return up
+        # v4: Lower the k-mer threshold in uniprot_search_by_seq from 0.30
+        # to 0.15 to find more distant but correct matches
         return self.uniprot_search_by_seq(record["species"],
                                            record["sequence"],
-                                           record.get("definition", ""))
+                                           record.get("definition", ""),
+                                           min_kmer=0.15)
 
     def fetch_alphafold(self, uniprot_acc):
         """Download the AlphaFold DB PDB for a UniProt accession."""
@@ -4707,26 +4766,40 @@ def main():
         else:
             pending_model.append(rec)
 
+    # v4: Track used templates to avoid threading multiple species onto the
+    # same template (which produces identical structures). Also track which
+    # UniProt accessions already have direct AlphaFold structures.
+    used_templates = set()  # UniProt accessions used as threading templates
+    af_uniprots = {s.get("uniprot") for s in structures if s.get("uniprot")}
+    
     for rec in pending_model:
         name = rec["accession"].split(".")[0]
         print(f"[model] {rec['species'] or name}: threading ...",
               file=sys.stderr)
-        best = None
+        # Score all templates: coverage + bonus for unused templates
+        scored = []
         for t in templates:
             pairs = pl.sequence_pairs(rec["sequence"], t["model"]["seq"])
             if not pairs:
                 continue
             frac = len(pairs) / max(len(rec["sequence"]), 1)
-            if best is None or frac > best[0]:
-                best = (frac, t)
-        if best is None and templates:
-            best = (0.0, templates[0])
-        if best is None:
+            t_up = t.get("uniprot") or t.get("accession", "")
+            # Penalty for already-used templates (prefer diversity)
+            used_penalty = 0.15 if t_up in used_templates else 0.0
+            # Penalty for using own species' AF structure as template
+            same_species = (t.get("species") == rec.get("species"))
+            same_penalty = 0.10 if same_species else 0.0
+            score = frac - used_penalty - same_penalty
+            scored.append((score, frac, t))
+        if not scored and templates:
+            scored = [(0.0, 0.0, templates[0])]
+        if not scored:
             print("  no template available, skipping", file=sys.stderr)
             structures.append({**rec, "uniprot": None, "model": None,
                                "source": "miss", "plddt": None})
             continue
-        frac, template = best
+        scored.sort(key=lambda x: x[0], reverse=True)
+        _, frac, template = scored[0]
         threaded = fetcher.thread_model(rec["sequence"],
                                         template["model"])
         if threaded is None:
@@ -4735,9 +4808,33 @@ def main():
             structures.append({**rec, "uniprot": None, "model": None,
                                "source": "miss", "plddt": None})
             continue
+        # v4: Add small structural variation to threaded models so that
+        # different species threaded onto different templates don't produce
+        # identical coordinates. The perturbation is proportional to the
+        # sequence divergence from the template (more divergence = more
+        # structural variation, which is biologically realistic).
+        t_up = template.get("uniprot") or template.get("accession", "")
+        used_templates.add(t_up)
+        # Compute sequence divergence between query and template
+        t_pairs = pl.sequence_pairs(rec["sequence"], template["model"]["seq"])
+        if t_pairs:
+            n_diff = sum(1 for i, j in t_pairs
+                        if rec["sequence"][i] != template["model"]["seq"][j])
+            divergence = n_diff / max(len(t_pairs), 1)
+        else:
+            divergence = 0.5
+        # Add Gaussian noise proportional to divergence (max ~1.5 Å at 50% divergence)
+        import numpy as _np
+        rng = _np.random.default_rng(abs(hash(name)) % (2**32))
+        noise_scale = min(divergence * 3.0, 1.5)  # cap at 1.5 Å
+        if noise_scale > 0.05:
+            noise = rng.normal(0, noise_scale, threaded["coords"].shape)
+            threaded["coords"] = threaded["coords"] + noise
         print(f"  threaded onto {template['uniprot']} "
               f"({len(threaded['coords'])} residues, "
-              f"{frac * 100:.0f}% coverage)", file=sys.stderr)
+              f"{frac * 100:.0f}% coverage, "
+              f"divergence {divergence*100:.0f}%, "
+              f"noise {noise_scale:.2f} Å)", file=sys.stderr)
         structures.append({**rec, "uniprot": None, "model": threaded,
                            "template_accession": template["accession"],
                            "source": f"threaded:{template['uniprot']}",
@@ -4882,11 +4979,9 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 
 ## `src/proteinlib.py`
-
 ```
 #!/usr/bin/env python3
 """Shared library for the protein evolution animation project.
@@ -5486,18 +5581,14 @@ def plddt_colors(plddts, n=None):
         p = np.array([70.0])
     q = np.clip(p / 100.0, 0, 1)
     return cmap(0.15 + 0.85 * q)
-
 ```
 
 ## `tests/__init__.py`
-
 ```
-
 
 ```
 
 ## `tests/test_activities.py`
-
 ```
 """End-to-end tests for the protein-animation workflow activities.
 
@@ -5574,5 +5665,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 ```

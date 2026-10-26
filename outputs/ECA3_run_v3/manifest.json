@@ -1,0 +1,76 @@
+{
+  "run": "ECA3_run_v3",
+  "gene": "ECA3",
+  "description": "ECA3 (Calcium-transporting ATPase 3, ER-type) evolutionary animation across 16 plant species - v3 with corrected sequences (scraper v5 + manual corrections)",
+  "pipeline_versions": {
+    "sequence_scraper": "v5 (stricter homolog verification: k-mer 0.10 + BLOSUM62 alignment identity 0.35) + manual corrections for 4 species",
+    "structure_aligner": "v3 (threaded-seq fix)",
+    "morph_animation": "v4 (union-space morph, RGB color fix)",
+    "interactive_viewer": "v16 (native scroll, draggable panel resize, residue click->3D highlight, sequence alignment panel with BLOSUM62 similarity coloring)"
+  },
+  "reference": "XP_044980229.1 (Hordeum vulgare)",
+  "n_structures": 16,
+  "n_frames": 500,
+  "corrected_species": {
+    "Oryza sativa": {
+      "old": "Q2QMX9 (ACA10, wrong family)",
+      "new": "XP_015632272 (ECA3, true ortholog)",
+      "old_identity": 0.339,
+      "new_identity": 0.946
+    },
+    "Phaseolus vulgaris": {
+      "old": "A0AAN9MGY5 (wrong species/family)",
+      "new": "XP_068480729 (ECA3, true ortholog)",
+      "old_identity": 0.321,
+      "new_identity": 0.826
+    },
+    "Picea abies": {
+      "old": "CAL1823912.1 (wrong protein, 847 aa)",
+      "new": "CAL1804607 (ECA3, true ortholog)",
+      "old_identity": 0.314,
+      "new_identity": 0.809
+    },
+    "Chlamydomonas reinhardtii": {
+      "old": "A0A2K3D2Z5 (kept)",
+      "new": "A0A2K3D2Z5 (same, distant green alga)",
+      "old_identity": 0.342,
+      "new_identity": 0.348
+    }
+  },
+  "files": {
+    "sequences.fasta": {
+      "bytes": 17872,
+      "sha256": "c720931ac57e8a93"
+    },
+    "sequences.tsv": {
+      "bytes": 1442,
+      "sha256": "6d7d202ee9e62def"
+    },
+    "structures/aligned.json": {
+      "bytes": 556936,
+      "sha256": "6e10a9a14fac4329"
+    },
+    "structures/summary.tsv": {
+      "bytes": 1495,
+      "sha256": "02bb58f2f7af7dbd"
+    },
+    "evolution.gif": {
+      "bytes": 7376067,
+      "sha256": "3473af82a9b83219"
+    },
+    "evolution_sheet.png": {
+      "bytes": 278985,
+      "sha256": "b9f0ace9405a98ef"
+    },
+    "viewer.html": {
+      "bytes": 2061164,
+      "sha256": "112b235c7a018471"
+    },
+    "structures/aligned/": {
+      "entries": 16
+    },
+    "structures/raw/": {
+      "entries": 8
+    }
+  }
+}

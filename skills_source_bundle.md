@@ -2909,7 +2909,8 @@ def main():
     import matplotlib.pyplot as plt
 
     def colors_for(s, n):
-        return pl.plddt_colors(s.get("plddts") or [70] * n, n)
+        cols = pl.plddt_colors(s.get("plddts") or [70] * n, n)
+        return np.asarray(cols)[:, :3]  # RGB only (drop alpha)
 
     # v3: correspondence for the morph is anchored through the alignment
     # reference, so a pairwise alignment slip between two distant homologs

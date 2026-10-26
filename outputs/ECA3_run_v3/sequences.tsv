@@ -1,0 +1,17 @@
+lineage	species	family	accession	length	quality	definition
+Green Algae	Chlamydomonas reinhardtii	Chlamydomonadaceae	A0A2K3D2Z5	1127	corrected	tr|A0A2K3D2Z5|A0A2K3D2Z5_CHLRE Calcium-transporting ATPase OS=Chlamydomonas rein
+Green Algae	Volvox carteri	Volvocaceae	XP_002958852.1	1065	v2_kept	
+Green Algae	Chlorella vulgaris	Chlorellaceae	PRW20976.1	1062	v2_kept	
+Bryophytes	Physcomitrium patens	Physcomitriaceae	XP_024389658.1	1001	v2_kept	
+Bryophytes	Marchantia polymorpha	Marchantiaceae	BFI42203.1	1049	v2_kept	
+Ferns	Azolla filiculoides	Salviniaceae	XP_087190603.1	1002	v2_kept	
+Gymnosperms	Pinus taeda	Pinaceae	XP_089305251.1	1001	v2_kept	
+Gymnosperms	Picea abies	Pinaceae	CAL1804607	1045	corrected	CAL1804607.1 unnamed protein product [Picea abies]
+Angiosperms	Arabidopsis thaliana	Brassicaceae	Q9SY55	998	v2_kept	
+Angiosperms	Oryza sativa	Poaceae	XP_015632272	1000	corrected	XP_015632272.1 calcium-transporting ATPase 3, endoplasmic reticulum-type isoform
+Angiosperms	Zea mays	Poaceae	PWZ53365.1	965	v2_kept	
+Angiosperms	Solanum lycopersicum	Solanaceae	XP_004242949.1	1000	v2_kept	
+Angiosperms	Populus trichocarpa	Salicaceae	XP_010999893.1	1001	v2_kept	
+Angiosperms	Phaseolus vulgaris	Fabaceae	XP_068480729	1001	corrected	XP_068480729.1 calcium-transporting ATPase 3, endoplasmic reticulum-type [Phaseo
+Angiosperms	Hordeum vulgare	Poaceae	XP_044980229.1	1000	v2_kept	
+Angiosperms	Nicotiana benthamiana	Solanaceae	OIT37031.1	1000	v2_kept	

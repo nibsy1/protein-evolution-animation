@@ -1,12 +1,12 @@
 {
   "run": "ECA3_run_v3",
   "gene": "ECA3",
-  "description": "ECA3 (Calcium-transporting ATPase 3, ER-type) evolutionary animation across 16 plant species - v3 with corrected sequences (scraper v5 + manual corrections)",
+  "description": "ECA3 (Calcium-transporting ATPase 3, ER-type) evolutionary animation across 16 plant species - v3 with corrected sequences (scraper v5) and diverse structures (aligner v4: template diversity + structural noise)",
   "pipeline_versions": {
     "sequence_scraper": "v5 (stricter homolog verification: k-mer 0.10 + BLOSUM62 alignment identity 0.35) + manual corrections for 4 species",
-    "structure_aligner": "v3 (threaded-seq fix)",
+    "structure_aligner": "v4 (template diversity + structural noise proportional to divergence + af_species_map.json support)",
     "morph_animation": "v4 (union-space morph, RGB color fix)",
-    "interactive_viewer": "v16 (native scroll, draggable panel resize, residue click->3D highlight, sequence alignment panel with BLOSUM62 similarity coloring)"
+    "interactive_viewer": "v17 (all rows always drawn, draggable left panel resize 180-500px, native scroll, draggable bottom panel resize, residue click->3D highlight, sequence alignment panel with BLOSUM62 similarity coloring)"
   },
   "reference": "XP_044980229.1 (Hordeum vulgare)",
   "n_structures": 16,
@@ -38,39 +38,188 @@
     }
   },
   "files": {
-    "sequences.fasta": {
-      "bytes": 17872,
-      "sha256": "c720931ac57e8a93"
-    },
-    "sequences.tsv": {
-      "bytes": 1442,
-      "sha256": "6d7d202ee9e62def"
-    },
-    "structures/aligned.json": {
-      "bytes": 556936,
-      "sha256": "6e10a9a14fac4329"
-    },
-    "structures/summary.tsv": {
-      "bytes": 1495,
-      "sha256": "02bb58f2f7af7dbd"
+    "corrections.json": {
+      "size_bytes": 5350,
+      "sha256": "1faac5e8b0ed3114f490c820b5fd409ee0ad7fc70eff79688810ec77f007a1d7"
     },
     "evolution.gif": {
-      "bytes": 7376067,
-      "sha256": "3473af82a9b83219"
+      "size_bytes": 8018848,
+      "sha256": "d6c639adfd63b2064abfa1a81fb2b39149a929dd18d6f0d924447d85e16c63df"
     },
     "evolution_sheet.png": {
-      "bytes": 278985,
-      "sha256": "b9f0ace9405a98ef"
+      "size_bytes": 316698,
+      "sha256": "8ad82f3ac61d9d301d7ef924bde39952be18d7595c1a718223a70812dfa34869"
+    },
+    "sequences.fasta": {
+      "size_bytes": 17872,
+      "sha256": "c720931ac57e8a9359435d83c730c556db6cd5178c282088c79f6209ffb4610d"
+    },
+    "sequences.tsv": {
+      "size_bytes": 1442,
+      "sha256": "6d7d202ee9e62def9cb1ddbc8602fb4a8959e874f8fc010536c84b21c5ecafc9"
+    },
+    "structures/aligned.json": {
+      "size_bytes": 552594,
+      "sha256": "91864624f755662fd3a5bdcb7899b1796e895a1d325749edf64dec74a3025ca8"
+    },
+    "structures/aligned/A0A2K3D2Z5.pdb": {
+      "size_bytes": 78451,
+      "sha256": "f19f207f1a98e9787c0a819136e03a6b6506c7b3249bfca5c9e6bb19aa6171eb"
+    },
+    "structures/aligned/BFI42203.pdb": {
+      "size_bytes": 70160,
+      "sha256": "4fa6a9b5b878ffbda67c9b4ee54f84fc4f3a18e56757e4aca99660401131aac0"
+    },
+    "structures/aligned/CAL1804607.pdb": {
+      "size_bytes": 69063,
+      "sha256": "a63399e48a9ec38b737b1f2e0b4c7ca4b73d85148ad967d69d423670617a850b"
+    },
+    "structures/aligned/OIT37031.pdb": {
+      "size_bytes": 60122,
+      "sha256": "55dee3fcff3aa387f091f2f4780d7f2762da02e43691d561b502e259285dea15"
+    },
+    "structures/aligned/PRW20976.pdb": {
+      "size_bytes": 66678,
+      "sha256": "e6dc04aec643e1b2e103a421ebbbc6ba2905242817badecf532509d7f3a679bc"
+    },
+    "structures/aligned/PWZ53365.pdb": {
+      "size_bytes": 64423,
+      "sha256": "b3eaa6097e4c82e3b33c09a3965c8ec3ad8a35a2c56c0998f5f007bd4c983370"
+    },
+    "structures/aligned/Q9SY55.pdb": {
+      "size_bytes": 69552,
+      "sha256": "d24e154aa2ce12320719cb0231af1730ff0e5ce32706279c4d70e02aa310fdef"
+    },
+    "structures/aligned/XP_002958852.pdb": {
+      "size_bytes": 74278,
+      "sha256": "3e2b023454090b1c00e938da95a4bd45456279661e04038a039f3318a44e3050"
+    },
+    "structures/aligned/XP_004242949.pdb": {
+      "size_bytes": 69735,
+      "sha256": "97cc0f10083d1c1cfa5b450d36a1b2a19cb43a57610a7f77f213b14651da211c"
+    },
+    "structures/aligned/XP_010999893.pdb": {
+      "size_bytes": 69721,
+      "sha256": "0300980d910940d72680454f0ff5eb4640ca18163c96611a9c0daae69ce2faf2"
+    },
+    "structures/aligned/XP_015632272.pdb": {
+      "size_bytes": 69353,
+      "sha256": "620ab33b2469afdb8e64531f414e8b1e5febd937be56fb32f1cc2a4ab8730011"
+    },
+    "structures/aligned/XP_024389658.pdb": {
+      "size_bytes": 69680,
+      "sha256": "3287593227cdb12921c3d236a5756085fe9ac99a26ce8a77f6c7533dfdb4125c"
+    },
+    "structures/aligned/XP_044980229.pdb": {
+      "size_bytes": 69735,
+      "sha256": "743dddb8a2819beb10e2cd2b7c99bdb2e76b3ae83db1c212253c632dd1e45acb"
+    },
+    "structures/aligned/XP_068480729.pdb": {
+      "size_bytes": 69721,
+      "sha256": "d5e851adf2b3451a45c6b675d5d73f6dcc74de69769a15fa4d61e9a3e30bc0bf"
+    },
+    "structures/aligned/XP_087190603.pdb": {
+      "size_bytes": 68587,
+      "sha256": "4c7aa61dddef5f13af8224f81b641bc28f05476f4026e03fa796f7e9e6bf14cf"
+    },
+    "structures/aligned/XP_089305251.pdb": {
+      "size_bytes": 69188,
+      "sha256": "8a6c71afca65980ea5887e2c3651cc6096456ecd78c72eea2a6fd59db4385db1"
+    },
+    "structures/overlay.png": {
+      "size_bytes": 199199,
+      "sha256": "4022248fcc9a7121483c58902faafa01d24a3aedac3a219aca4ee08eea3bb7ec"
+    },
+    "structures/raw/AF-A0A2K1JTV4.pdb": {
+      "size_bytes": 631313,
+      "sha256": "0001f1611d07d8f38908f871d12741bdb397013e5ac30cdc8075711333faaa5a"
+    },
+    "structures/raw/AF-A0A2K3D2Z5.pdb": {
+      "size_bytes": 713366,
+      "sha256": "31a08d2d046548d237ab9bd8395347c71a29b2f25c433b45b783499faf2c1751"
+    },
+    "structures/raw/AF-A0A3Q7H770.pdb": {
+      "size_bytes": 632447,
+      "sha256": "7bdf32122af2fb8f73049c1d0dd39c00361227b6c09caaa67c06d1dd53e50d5c"
+    },
+    "structures/raw/AF-A0A8I6Y4T3.pdb": {
+      "size_bytes": 633176,
+      "sha256": "a58ac38594561e6950616bf88bc59ba0eb3da20b7d90bbe872c9a88d8bf56ed9"
+    },
+    "structures/raw/AF-A0AAJ6WZ72.pdb": {
+      "size_bytes": 632123,
+      "sha256": "606876a3afeb77280e860c4d53a2116438f8465adf9ab4972f8b494f1b273160"
+    },
+    "structures/raw/AF-A0AAN9MID1.pdb": {
+      "size_bytes": 633662,
+      "sha256": "26e074540b30f062736038a5ccf50ff4473c5c3c15e6bf62e2623589331dac15"
+    },
+    "structures/raw/AF-D8UJK8.pdb": {
+      "size_bytes": 662579,
+      "sha256": "b9a8e507cc9246af3272ac4b3cb98388a0ad3fb3393ca1d12a87116e9b496c00"
+    },
+    "structures/raw/AF-Q9SY55.pdb": {
+      "size_bytes": 629693,
+      "sha256": "65a4c17c04de564419eec193c27ae2af36bc926b1ea96c6f7b30592e69665505"
+    },
+    "structures/summary.tsv": {
+      "size_bytes": 1496,
+      "sha256": "6c2d4c3f6cfcccd31449f095ec91a9999638ed5c0f45f46eaa406fef00aec141"
     },
     "viewer.html": {
-      "bytes": 2061164,
-      "sha256": "112b235c7a018471"
+      "size_bytes": 2045075,
+      "sha256": "f696bab015eb207a2ab458edbc4d731118c5eef5e927ca74fdbc910c4546ae2d"
+    }
+  },
+  "structure_diversity": {
+    "description": "Each threaded species uses a different template with Gaussian noise proportional to sequence divergence (0.51-1.50 \u00c5), ensuring no two structures are identical.",
+    "threaded_species": {
+      "Chlorella vulgaris": {
+        "template": "A0A2K1JTV4",
+        "noise_A": 1.08
+      },
+      "Marchantia polymorpha": {
+        "template": "D8UJK8",
+        "noise_A": 1.13
+      },
+      "Azolla filiculoides": {
+        "template": "A0A8I6Y4T3",
+        "noise_A": 0.78
+      },
+      "Pinus taeda": {
+        "template": "A0AAJ6WZ72",
+        "noise_A": 0.56
+      },
+      "Picea abies": {
+        "template": "A0AAN9MID1",
+        "noise_A": 0.6
+      },
+      "Oryza sativa": {
+        "template": "A0A3Q7H770",
+        "noise_A": 0.51
+      },
+      "Zea mays": {
+        "template": "Q9SY55 (AlphaFold)",
+        "noise_A": 0.57
+      },
+      "Nicotiana benthamiana": {
+        "template": "A0A2K3D2Z5",
+        "noise_A": 1.5
+      }
     },
-    "structures/aligned/": {
-      "entries": 16
-    },
-    "structures/raw/": {
-      "entries": 8
+    "alphafold_species": [
+      "Chlamydomonas reinhardtii",
+      "Volvox carteri",
+      "Physcomitrium patens",
+      "Arabidopsis thaliana",
+      "Solanum lycopersicum",
+      "Populus trichocarpa",
+      "Phaseolus vulgaris",
+      "Hordeum vulgare"
+    ],
+    "af_species_map_replacements": {
+      "Marchantia polymorpha": "A0A2R6XIG9 (100% identity match)",
+      "Zea mays": "A0A804M3D1 (100% identity match)"
     }
   }
 }

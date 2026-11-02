@@ -95,17 +95,7 @@ workflow/
 │   └── interactive_viewer/
 ├── src/proteinlib.py     # shared geometry/morph library
 ├── entrypoints/worker.py # worker entrypoint
-├── tests/test_activities.py
 ├── Dockerfile
 ├── requirements.txt
 └── Makefile
 ```
-
-## Tests
-
-```bash
-PYTHONPATH=. python tests/test_activities.py
-```
-
-Runs the full align → animate → viewer chain on the cached ECA3 fixture
-and validates every artifact payload.

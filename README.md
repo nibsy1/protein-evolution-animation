@@ -28,12 +28,10 @@ src/                    shared library + multi-agent pipeline
                         reference-anchored correspondence, orientation check
   agents/               taxonomy / search / structure / animation agents
   state/, config.py, main.py, run_pipeline.py
-workflow/               Mistral "protein animation" workflow (activities + workflow def)
-workflow_for_user/      user-facing copy of the workflow (+ DEPLOY.md)
-tests/                  unit tests for proteinlib
+workflow_for_user/      Mistral "protein animation" workflow (activities + workflow def, + DEPLOY.md)
 outputs/ECA3_run_v2/    the canonical ECA3 demo run (GIF, viewer, PDBs, ...)
 workflow_demo/          small 2-species end-to-end demo outputs
-data/                   test sequences + test structures
+data/                   reference + aligned structures (PDBs)
 ```
 
 ## Quick start
@@ -51,9 +49,6 @@ uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python skills/structure-aligner/scripts/fetch_and_align_structures.py ECA3.fasta -o structures/ --email you@example.com
 .venv/bin/python skills/morph-animation/scripts/morph_animation.py structures/aligned.json -o evolution.gif --hold 20 --morph 12
 .venv/bin/python skills/interactive-viewer/scripts/interactive_viewer.py structures/aligned.json -o viewer.html
-
-# tests
-.venv/bin/python tests/test_proteinlib.py
 ```
 
 ## The smooth, change-only transition (the core idea)

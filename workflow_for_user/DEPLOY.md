@@ -111,19 +111,8 @@ skills/             # the four skill scripts (imported as modules)
   sequence_scraper/ structure_aligner/ morph_animation/ interactive_viewer/
 src/proteinlib.py   # shared geometry/morph library
 entrypoints/worker.py
-tests/test_activities.py
 Dockerfile  requirements.txt  pyproject.toml  Makefile  README.md
 ```
-
-## Tests
-
-```bash
-PYTHONPATH=. python tests/test_activities.py
-```
-
-Runs align → animate → viewer on the cached ECA3 fixture and validates every
-artifact payload. (The fixture FASTA/PDBs are not in this folder; the test
-expects them one level up under `data/`.)
 
 ## Why it's not already under Workflows
 
